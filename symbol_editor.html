@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Circuit Symbol Editor</title>
+    <link rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
+    <link rel="stylesheet" href="./src/style.css">
+</head>
+
+<body>
+    <h1>Circuit Symbol Editor</h1>
+
+    <div class="container">
+        <div class="workspace-grid">
+            <!-- Left Panel: Component List -->
+            <div class="panel components-panel">
+                <h2>Components</h2>
+                <div class="component-list" id="componentList"></div>
+                <div class="btn-group">
+                    <button class="btn btn-primary btn-icon" onclick="newComponent()" title="New Component">
+                        <span class="material-symbols-outlined">add</span>
+                    </button>
+                    <button class="btn btn-secondary btn-icon" onclick="duplicateComponent()"
+                        title="Duplicate Component">
+                        <span class="material-symbols-outlined">content_copy</span>
+                    </button>
+                    <button class="btn btn-danger btn-icon" onclick="deleteComponent()" title="Delete Component">
+                        <span class="material-symbols-outlined">delete</span>
+                    </button>
+                </div>
+                <h2 class="json-header">JSON</h2>
+                <div class="btn-group">
+                    <input type="file" id="fileInput" accept=".json" onchange="loadFromFile(event)">
+                    <button class="btn btn-secondary" onclick="document.getElementById('fileInput').click()">Load</button>
+                    <button class="btn btn-secondary" onclick="downloadJSON()">Save</button>
+                    <button class="btn btn-secondary" onclick="newJSON()">New</button>
+                </div>
+            </div>
+
+            <!-- Center: Canvas -->
+            <div class="panel canvas-container canvas-panel">
+                <div class="toolbar">
+                    <button class="btn btn-secondary btn-icon" onclick="setMode('select')" id="btn-select"
+                        title="Select">
+                        <span class="material-symbols-outlined">arrow_selector_tool</span>
+                    </button>
+                    <button class="btn btn-secondary btn-icon" onclick="setMode('line')" id="btn-line" title="Line">
+                        <span class="material-symbols-outlined">diagonal_line</span>
+                    </button>
+                    <button class="btn btn-secondary btn-icon" onclick="setMode('circle')" id="btn-circle"
+                        title="Circle">
+                        <span class="material-symbols-outlined">circle</span>
+                    </button>
+                    <button class="btn btn-secondary btn-icon" onclick="setMode('arc')" id="btn-arc" title="Arc">
+                        <span class="material-symbols-outlined">line_curve</span>
+                    </button>
+                    <button class="btn btn-secondary btn-icon" onclick="setMode('polygon')" id="btn-polygon"
+                        title="Polygon">
+                        <span class="material-symbols-outlined">pentagon</span>
+                    </button>
+                    <button class="btn btn-secondary btn-icon" onclick="setMode('polyline')" id="btn-polyline"
+                        title="Polyline">
+                        <span class="material-symbols-outlined">polyline</span>
+                    </button>
+                    <button class="btn btn-secondary btn-icon" onclick="setMode('pin')" id="btn-pin" title="Pin">
+                        <span class="material-symbols-outlined">line_end_circle</span>
+                    </button>
+                    <div class="separator"></div>
+                    <button class="btn btn-secondary btn-icon" onclick="deleteSelected()" title="Delete Selected">
+                        <span class="material-symbols-outlined">backspace</span>
+                    </button>
+                    <button class="btn btn-secondary btn-icon" onclick="clearDrawing()" title="Clear All">
+                        <span class="material-symbols-outlined">delete_sweep</span>
+                    </button>
+                    <div class="separator"></div>
+                    <label>Stroke:</label>
+                    <input type="number" id="strokeWidth" value="4" min="1" max="10" onchange="updateSelectedStroke()">
+                    <input type="checkbox" id="filled" style="margin-left: 10px;">
+                    <label for="filled">Fill</label>
+                    <div class="separator"></div>
+                    <label>Grid:</label>
+                    <input type="number" id="gridSize" value="5" min="1" max="20" onchange="redraw()">
+                    <input type="checkbox" id="snapToGrid" checked style="margin-left: 10px;">
+                    <label for="snapToGrid" style="min-width: auto;">Snap</label>
+                </div>
+                <div class="canvas-layout">
+                    <div class="label-preview-section">
+                        <div class="label-preview">
+                            <div class="label-preview-title">
+                                <span>Labels 0° / 180°</span>
+                                <span class="label-chip">View Only</span>
+                            </div>
+                            <canvas id="labelPreview0"></canvas>
+                        </div>
+                        <div class="label-preview">
+                            <div class="label-preview-title">
+                                <span>Labels 90° / 270°</span>
+                                <span class="label-chip">View Only</span>
+                            </div>
+                            <canvas id="labelPreview90"></canvas>
+                        </div>
+                    </div>
+                    <div class="canvas-main">
+                        <div class="canvas-wrapper">
+                            <canvas id="canvas"></canvas>
+                            <div class="canvas-info" id="canvasInfo">x: 0, y: 0</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- JSON Output -->
+            <div class="panel json-output">
+                <h2>
+                    JSON Output
+                    <button class="btn btn-secondary" onclick="copyJSON()">Copy to Clipboard</button>
+                </h2>
+                <textarea id="jsonOutput" readonly></textarea>
+            </div>
+        </div>
+
+        <!-- Right Panel: Properties -->
+        <div class="panel properties">
+            <button class="btn btn-primary" onclick="updateComponent()" style="width: 100%; margin-bottom: 16px;">Save Component</button>
+            <div class="prop-group">
+                <h3>Component Info</h3>
+                <div class="prop-row">
+                    <label>ID:</label>
+                    <input type="text" id="compId" placeholder="resistor">
+                </div>
+                <div class="prop-row">
+                    <label>Name:</label>
+                    <input type="text" id="compName" placeholder="Resistor">
+                </div>
+                <div class="prop-row">
+                    <label>Prefix:</label>
+                    <select id="compPrefix" style="width: 70px;"></select>
+                    <input type="checkbox" id="compAutoInc" checked>
+                    <label for="compAutoInc" style="min-width: auto;">Auto #</label>
+                </div>
+                <div class="prop-row">
+                    <label>Default:</label>
+                    <input type="text" id="compDefault" placeholder="1k">
+                </div>
+                <div class="prop-row">
+                    <label>Width:</label>
+                    <input type="number" id="compWidth" value="80" min="20" max="200" onchange="resizeCanvas()">
+                </div>
+                <div class="prop-row">
+                    <label>Height:</label>
+                    <input type="number" id="compHeight" value="40" min="20" max="200" onchange="resizeCanvas()">
+                </div>
+            </div>
+
+            <div class="prop-group">
+                <h3>Pins</h3>
+                <div class="pin-list" id="pinList"></div>
+                <button class="btn btn-secondary small-btn" style="margin-top: 8px;" onclick="addPinManual()">+ Add
+                    Pin</button>
+            </div>
+
+            <div class="prop-group">
+                <h3>Label Placement (0° / 180°)</h3>
+                <div class="prop-row">
+                    <label>Designator:</label>
+                    <div class="label-coords">
+                        <input type="number" id="designatorLabel0X" placeholder="x">
+                        <input type="number" id="designatorLabel0Y" placeholder="y">
+                    </div>
+                </div>
+                <div class="prop-row">
+                    <label>Value:</label>
+                    <div class="label-coords">
+                        <input type="number" id="valueLabel0X" placeholder="x">
+                        <input type="number" id="valueLabel0Y" placeholder="y">
+                    </div>
+                </div>
+            </div>
+
+            <div class="prop-group">
+                <h3>Label Placement (90° / 270°)</h3>
+                <div class="prop-row">
+                    <label>Designator:</label>
+                    <div class="label-coords">
+                        <input type="number" id="designatorLabel90X" placeholder="x">
+                        <input type="number" id="designatorLabel90Y" placeholder="y">
+                    </div>
+                </div>
+                <div class="prop-row">
+                    <label>Value:</label>
+                    <div class="label-coords">
+                        <input type="number" id="valueLabel90X" placeholder="x">
+                        <input type="number" id="valueLabel90Y" placeholder="y">
+                    </div>
+                </div>
+            </div>
+
+            <div class="prop-group">
+                <h3>Drawing Elements</h3>
+                <div class="element-list" id="elementList"></div>
+            </div>
+        </div>
+    </div>
+
+
+
+        <script type="module" src="./src/symbol_editor/main.js"></script>
+
+</body>
+
+</html>

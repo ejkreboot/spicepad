@@ -1,0 +1,8 @@
+{
+  "primitives": {
+    "R": { "defaultValue": "1k" },
+    "C": { "defaultValue": "1uF" },
+    "L": { "defaultValue": "1mH" },
+    "GND": { "defaultValue": null }
+  }
+}

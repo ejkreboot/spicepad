@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Circuit Editor Proof of Concept</title>
+		<link rel="stylesheet" href="./src/style.css" />
+	</head>
+	<body>
+	    <h1>Circuit Simulator</h1>
+		<main>
+			<section class="panel side-panel">
+				<h2>Components</h2>
+				<div class="palette" id="componentPalette"></div>
+				<div class="tool-actions">
+					<button type="button" id="wireToolToggle">Wire Tool</button>
+					<button type="button" id="deleteToolToggle">Delete Tool</button>
+				</div>
+				<p class="status-line">Click inside the canvas to place the active component. Toggle the wire tool to connect pins. Grid size: 5px (dot grid).</p>
+			</section>
+			<div class="canvas-wrapper">
+				<canvas id="editorCanvas" width="1000" height="650" aria-label="Circuit editor canvas"></canvas>
+			</div>
+			<section class="netlist-panel" aria-live="polite">
+				<h2>Netlist</h2>
+				<div
+					id="netlistOutput"
+					class="netlist-output"
+					role="textbox"
+					aria-readonly="true"
+					tabindex="0"
+				></div>
+			</section>
+		</main>
+
+		        <script type="module" src="./src/sim/main.js"></script>
+
+	</body>
+</html>
