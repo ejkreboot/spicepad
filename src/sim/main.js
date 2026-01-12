@@ -10,6 +10,9 @@ const GRID_SIZE = 5;
 			const TOOL_DELETE = "delete";
 			const PIN_HIT_RADIUS = 10;
 			const DRAG_THRESHOLD = 4;
+			const NET_CELL_SIZE = GRID_SIZE * 2;
+			const JUNCTION_RADIUS = 2.8;
+			const HOVER_NET_COLOR = "#2563eb";
 			const canvas = document.getElementById("editorCanvas");
 			const ctx = canvas.getContext("2d");
 			const palette = document.getElementById("componentPalette");
@@ -40,8 +43,13 @@ const GRID_SIZE = 5;
 				pendingWire: null,
 				pointerWorld: null,
 				hoverPlacementId: null,
+				hoverNetId: null,
 				netlistText: "",
 				referenceMap: Object.create(null),
+				nets: new Map(),
+				pinToNet: new Map(),
+				wireToNet: new Map(),
+				junctionPoints: [],
 			};
 
 				document.addEventListener("DOMContentLoaded", () => {
@@ -221,34 +229,46 @@ const GRID_SIZE = 5;
 			}
 
 			function handleWirePointerDown(point) {
-				const hit = findPinAt(point);
-				if (!hit) {
+				const pinHit = findPinAt(point);
+				const snappedPoint = {
+					x: snapToGrid(point.x),
+					y: snapToGrid(point.y),
+				};
+				const wireHitIndex = pinHit ? -1 : findWireAt(point);
+				let targetRef = null;
+				if (pinHit) {
+					const placementId = ensurePlacementId(pinHit.placement);
+					targetRef = {
+						kind: "pin",
+						placementId,
+						pinId: pinHit.pin.id,
+					};
+				} else if (wireHitIndex !== -1) {
+					targetRef = {
+						kind: "point",
+						point: snappedPoint,
+					};
+				}
+				if (!targetRef) {
 					if (state.pendingWire) {
 						addPendingWireWaypoint(point);
 					}
 					return;
 				}
-				const placementId = ensurePlacementId(hit.placement);
-				const targetRef = {
-					placementId,
-					pinId: hit.pin.id,
-				};
 				if (!state.pendingWire) {
-					state.pendingWire = { from: targetRef, waypoints: [] };
+					state.pendingWire = { from: normalizeEndpointRef(targetRef), waypoints: [] };
 					requestRender();
 					return;
 				}
-				const samePin =
-					state.pendingWire.from.placementId === targetRef.placementId &&
-					state.pendingWire.from.pinId === targetRef.pinId;
-				if (samePin) {
+				const sameEndpoint = areEndpointsEqual(state.pendingWire.from, targetRef);
+				if (sameEndpoint) {
 					state.pendingWire = null;
 					requestRender();
 					return;
 				}
 				const newWire = createWireBetween(
 					state.pendingWire.from,
-					targetRef,
+					normalizeEndpointRef(targetRef),
 					state.pendingWire.waypoints
 				);
 				if (newWire) {
@@ -291,6 +311,7 @@ const GRID_SIZE = 5;
 				const point = getCanvasCoordinates(event);
 				updatePointerWorld(point);
 				updateHoverPlacement(point);
+				updateHoverNet(point);
 				return point;
 			}
 
@@ -344,6 +365,38 @@ const GRID_SIZE = 5;
 				}
 			}
 
+			function updateHoverNet(point) {
+				if (!point) {
+					clearHoverNet();
+					return;
+				}
+				let nextNetId = null;
+				const pinHit = findPinAt(point);
+				if (pinHit) {
+					const placementId = ensurePlacementId(pinHit.placement);
+					const pinKey = makePinKey(placementId, pinHit.pin.id);
+					nextNetId = state.pinToNet?.get(pinKey) || null;
+				}
+				if (!nextNetId) {
+					const wireIndex = findWireAt(point);
+					if (wireIndex !== -1) {
+						const wire = state.wires[wireIndex];
+						nextNetId = state.wireToNet?.get(wire.id) || null;
+					}
+				}
+				if (nextNetId !== state.hoverNetId) {
+					state.hoverNetId = nextNetId;
+					requestRender();
+				}
+			}
+
+			function clearHoverNet() {
+				if (state.hoverNetId !== null) {
+					state.hoverNetId = null;
+					requestRender();
+				}
+			}
+
 			function beginPan(event) {
 				state.panning = {
 					pointerId: event.pointerId,
@@ -389,6 +442,7 @@ const GRID_SIZE = 5;
 				const point = getCanvasCoordinates(event);
 				updatePointerWorld(point);
 				updateHoverPlacement(point);
+				updateHoverNet(point);
 
 				if (state.selectionDrag && event.pointerId === state.selectionDrag.pointerId) {
 					updateSelectionDrag(point);
@@ -440,6 +494,7 @@ const GRID_SIZE = 5;
 			function handlePointerLeave() {
 				clearPointerWorld();
 				clearHoverPlacement();
+				clearHoverNet();
 				state.selectionBox = null;
 				state.pendingPlacement = null;
 			}
@@ -537,6 +592,7 @@ const GRID_SIZE = 5;
 					}
 				});
 				if (moved) {
+					state.selectionDrag.moved = true;
 					// Reroute wires connected to any moved placement.
 					state.selectionDrag.baseline.forEach((_, placementId) => {
 						rerouteWiresForPlacement(placementId);
@@ -552,7 +608,11 @@ const GRID_SIZE = 5;
 				if (typeof canvas.releasePointerCapture === "function" && state.selectionDrag.pointerId != null) {
 					canvas.releasePointerCapture(state.selectionDrag.pointerId);
 				}
+				const dragged = state.selectionDrag.moved;
 				state.selectionDrag = null;
+				if (dragged) {
+					updateNetlist();
+				}
 			}
 
 			function startSelectionBox(startPoint, pointerId) {
@@ -707,7 +767,7 @@ const GRID_SIZE = 5;
 				const threshold = 8;
 				for (let index = state.wires.length - 1; index >= 0; index -= 1) {
 					const wire = state.wires[index];
-					const path = wire?.path || [];
+					const path = getWirePoints(wire);
 					for (let i = 0; i < path.length - 1; i += 1) {
 						const start = path[i];
 						const end = path[i + 1];
@@ -755,9 +815,9 @@ const GRID_SIZE = 5;
 						state.hoverPlacementId = null;
 					}
 					state.wires = state.wires.filter((wire) => {
-						return (
-							wire.from.placementId !== removedId && wire.to.placementId !== removedId
-						);
+						const fromMatches = isPinEndpoint(wire.from) && wire.from.placementId === removedId;
+						const toMatches = isPinEndpoint(wire.to) && wire.to.placementId === removedId;
+						return !fromMatches && !toMatches;
 					});
 				}
 				updateNetlist();
@@ -807,6 +867,7 @@ const GRID_SIZE = 5;
 				placement.rotation = nextRotation;
 				const placementId = ensurePlacementId(placement);
 				rerouteWiresForPlacement(placementId);
+				updateNetlist();
 				requestRender();
 			}
 
@@ -837,39 +898,114 @@ const GRID_SIZE = 5;
 				return getPinWorldPosition(placement, pin);
 			}
 
+			function isPinEndpoint(ref) {
+				if (!ref) {
+					return false;
+				}
+				if (ref.kind === "pin") {
+					return true;
+				}
+				return Boolean(ref.placementId && ref.pinId);
+			}
+
+			function normalizeEndpointRef(ref) {
+				if (!ref) {
+					return null;
+				}
+				if (ref.kind === "point") {
+					const px = ref.point?.x ?? ref.x;
+					const py = ref.point?.y ?? ref.y;
+					if (px == null || py == null) {
+						return null;
+					}
+					return {
+						kind: "point",
+						point: {
+							x: snapToGrid(px),
+							y: snapToGrid(py),
+						},
+					};
+				}
+				if (isPinEndpoint(ref)) {
+					return {
+						kind: "pin",
+						placementId: ref.placementId,
+						pinId: ref.pinId,
+					};
+				}
+				return null;
+			}
+
+			function resolveEndpointPosition(ref) {
+				if (!ref) {
+					return null;
+				}
+				if (isPinEndpoint(ref)) {
+					return getPinPositionFromRef(ref);
+				}
+				if (ref.kind === "point" && ref.point) {
+					return { x: ref.point.x, y: ref.point.y };
+				}
+				return null;
+			}
+
+			function areEndpointsEqual(a, b) {
+				if (!a || !b) {
+					return false;
+				}
+				if (isPinEndpoint(a) && isPinEndpoint(b)) {
+					return a.placementId === b.placementId && a.pinId === b.pinId;
+				}
+				if (a.kind === "point" && b.kind === "point") {
+					return a.point?.x === b.point?.x && a.point?.y === b.point?.y;
+				}
+				return false;
+			}
+
 			function createWireBetween(fromRef, toRef, waypoints = []) {
 				if (!fromRef || !toRef) {
 					return null;
 				}
-				if (fromRef.placementId === toRef.placementId && fromRef.pinId === toRef.pinId) {
+				const normalizedFrom = normalizeEndpointRef(fromRef);
+				const normalizedTo = normalizeEndpointRef(toRef);
+				if (!normalizedFrom || !normalizedTo) {
+					return null;
+				}
+				if (areEndpointsEqual(normalizedFrom, normalizedTo)) {
 					return null;
 				}
 				const normalizedWaypoints = Array.isArray(waypoints)
 					? waypoints.map((point) => ({ x: point.x, y: point.y }))
 					: [];
-				const path = buildWirePath(fromRef, toRef, normalizedWaypoints);
-				if (!path) {
+				const vertices = buildWireVertices(normalizedFrom, normalizedTo, normalizedWaypoints);
+				if (!vertices) {
 					return null;
 				}
+				const interior = vertices.length > 2 ? vertices.slice(1, -1) : null;
 				return {
 					id: state.nextWireId++,
-					from: { ...fromRef },
-					to: { ...toRef },
-					waypoints: normalizedWaypoints.length ? normalizedWaypoints : null,
-					path,
+					from: normalizedFrom,
+					to: normalizedTo,
+					waypoints: interior,
+					vertices,
+					// Keep legacy accessor to avoid touching all draw sites at once.
+					path: vertices,
 				};
 			}
 
-			function buildWirePath(fromRef, toRef, waypoints) {
-				const startPoint = getPinPositionFromRef(fromRef);
-				const endPoint = getPinPositionFromRef(toRef);
+			function buildWireVertices(fromRef, toRef, waypoints) {
+				const startPoint = resolveEndpointPosition(fromRef);
+				const endPoint = resolveEndpointPosition(toRef);
 				if (!startPoint || !endPoint) {
 					return null;
 				}
+				let vertices;
 				if (Array.isArray(waypoints) && waypoints.length) {
-					return buildPolylinePath([startPoint, ...waypoints, endPoint]);
+					vertices = buildPolylinePath([startPoint, ...waypoints, endPoint]);
+				} else {
+					vertices = buildManhattanPath(startPoint, endPoint);
 				}
-				return buildManhattanPath(startPoint, endPoint);
+				return mergeCollinearVertices(vertices);
 			}
 
 			function buildManhattanPath(startPoint, endPoint) {
@@ -889,7 +1025,7 @@ const GRID_SIZE = 5;
 				if (!state.pendingWire || !state.pointerWorld) {
 					return null;
 				}
-				const originPoint = getPinPositionFromRef(state.pendingWire.from);
+				const originPoint = resolveEndpointPosition(state.pendingWire.from);
 				if (!originPoint) {
 					return null;
 				}
@@ -905,11 +1041,14 @@ const GRID_SIZE = 5;
 					return;
 				}
 				state.wires.forEach((wire) => {
-					if (wire.from.placementId === placementId || wire.to.placementId === placementId) {
-						wire.waypoints = null;
-						const nextPath = buildWirePath(wire.from, wire.to);
-						if (nextPath) {
-							wire.path = nextPath;
+					const affectsFrom = isPinEndpoint(wire.from) && wire.from.placementId === placementId;
+					const affectsTo = isPinEndpoint(wire.to) && wire.to.placementId === placementId;
+					if (affectsFrom || affectsTo) {
+						const nextVertices = applyRubberBandToWire(wire, placementId);
+						if (nextVertices) {
+							wire.vertices = nextVertices;
+							wire.path = nextVertices;
+							wire.waypoints = nextVertices.length > 2 ? nextVertices.slice(1, -1) : null;
 						}
 					}
 				});
@@ -929,16 +1068,543 @@ const GRID_SIZE = 5;
 						path.push(segment[j]);
 					}
 				}
-				return path;
+				return mergeCollinearVertices(path);
+			}
+
+			function applyRubberBandToWire(wire, movedPlacementId) {
+				if (!wire) {
+					return null;
+				}
+				let vertices = getWirePoints(wire).map((point) => ({ x: point.x, y: point.y }));
+				if (vertices.length < 2) {
+					return null;
+				}
+
+				let updated = false;
+				if (isPinEndpoint(wire.from) && wire.from.placementId === movedPlacementId) {
+					const next = rubberBandEndpoint(vertices, 0, 1, getPinPositionFromRef(wire.from));
+					if (next) {
+						vertices = next;
+						updated = true;
+					}
+				}
+				if (isPinEndpoint(wire.to) && wire.to.placementId === movedPlacementId) {
+					const next = rubberBandEndpoint(
+						vertices,
+						vertices.length - 1,
+						vertices.length - 2,
+						getPinPositionFromRef(wire.to)
+					);
+					if (next) {
+						vertices = next;
+						updated = true;
+					}
+				}
+
+				if (!updated) {
+					return null;
+				}
+				const merged = mergeCollinearVertices(vertices);
+				if (isOrthogonalPolyline(merged)) {
+					return merged;
+				}
+				// If the topology cannot be preserved, fall back to rebuilding a legal path.
+				return buildWireVertices(wire.from, wire.to, wire.waypoints || []);
+			}
+
+			function rubberBandEndpoint(vertices, endpointIndex, neighborIndex, pinPosition) {
+				if (!pinPosition || !vertices[neighborIndex]) {
+					return null;
+				}
+				const endpoint = vertices[endpointIndex];
+				const neighbor = vertices[neighborIndex];
+				const orientation = inferSegmentOrientation(endpoint, neighbor);
+				if (!orientation) {
+					return null;
+				}
+				const nextVertices = vertices.map((point) => ({ x: point.x, y: point.y }));
+				nextVertices[endpointIndex] = { x: pinPosition.x, y: pinPosition.y };
+				const aligned =
+					orientation === "horizontal"
+						? pinPosition.y === neighbor.y
+						: pinPosition.x === neighbor.x;
+				if (!aligned) {
+					const bridgePoint =
+						orientation === "horizontal"
+							? { x: neighbor.x, y: pinPosition.y }
+							: { x: pinPosition.x, y: neighbor.y };
+					if (endpointIndex === 0) {
+						nextVertices.splice(1, 0, bridgePoint);
+					} else {
+						nextVertices.splice(nextVertices.length - 1, 0, bridgePoint);
+					}
+				}
+				return nextVertices;
+			}
+
+			function inferSegmentOrientation(start, end) {
+				if (!start || !end) {
+					return null;
+				}
+				if (start.x === end.x) {
+					return "vertical";
+				}
+				if (start.y === end.y) {
+					return "horizontal";
+				}
+				return null;
+			}
+
+			function mergeCollinearVertices(vertices) {
+				if (!Array.isArray(vertices)) {
+					return [];
+				}
+				const merged = [];
+				vertices.forEach((point) => {
+					if (!point) {
+						return;
+					}
+					const last = merged[merged.length - 1];
+					if (last && last.x === point.x && last.y === point.y) {
+						return;
+					}
+					merged.push({ x: point.x, y: point.y });
+					if (merged.length >= 3) {
+						const a = merged[merged.length - 3];
+						const b = merged[merged.length - 2];
+						const c = merged[merged.length - 1];
+						if (areCollinearAxisAligned(a, b, c)) {
+							merged.splice(merged.length - 2, 1);
+						}
+					}
+				});
+				return merged;
+			}
+
+			function areCollinearAxisAligned(a, b, c) {
+				if (!a || !b || !c) {
+					return false;
+				}
+				return (a.x === b.x && b.x === c.x) || (a.y === b.y && b.y === c.y);
+			}
+
+			function isOrthogonalPolyline(vertices) {
+				if (!Array.isArray(vertices)) {
+					return false;
+				}
+				for (let i = 0; i < vertices.length - 1; i += 1) {
+					const start = vertices[i];
+					const end = vertices[i + 1];
+					if (!inferSegmentOrientation(start, end)) {
+						return false;
+					}
+				}
+				return true;
+			}
+
+			function getWirePoints(wire) {
+				if (!wire) {
+					return [];
+				}
+				if (Array.isArray(wire.vertices)) {
+					return wire.vertices;
+				}
+				if (Array.isArray(wire.path)) {
+					return wire.path;
+				}
+				return [];
+			}
+
+			function rebuildConnectivity() {
+				const graph = buildConnectivityGraph(state.wires, state.placements, state.library);
+				state.nets = graph.nets;
+				state.pinToNet = graph.pinToNet;
+				state.wireToNet = graph.wireToNet;
+				state.junctionPoints = graph.junctions;
+			}
+
+			function buildConnectivityGraph(wires, placements, library) {
+				const segments = collectWireSegments(wires);
+				const segmentNodes = new Map();
+				const pointMeta = new Map();
+				const wirePointKeys = new Map();
+				const index = createSpatialIndex();
+				const pins = collectPlacedPins(placements, library);
+
+				segments.forEach((segment, indexValue) => {
+					segment.index = indexValue;
+					segmentNodes.set(indexValue, new Set());
+					addSegmentToIndex(index, segment);
+					registerSegmentEndpoint(segmentNodes, pointMeta, wirePointKeys, segment.index, segment.wireId, segment.start);
+					registerSegmentEndpoint(segmentNodes, pointMeta, wirePointKeys, segment.index, segment.wireId, segment.end);
+				});
+
+				const processedPairs = new Set();
+				segments.forEach((segment) => {
+					const candidates = querySegmentsForSegment(index, segment);
+					candidates.forEach((otherIndex) => {
+						if (otherIndex <= segment.index) {
+							return;
+						}
+						const pairKey = `${segment.index}|${otherIndex}`;
+						if (processedPairs.has(pairKey)) {
+							return;
+						}
+						processedPairs.add(pairKey);
+						const other = segments[otherIndex];
+						const intersections = findSegmentIntersections(segment, other);
+						intersections.forEach((point) => {
+							const key = recordPoint(pointMeta, wirePointKeys, segment.wireId, null, point);
+							recordPoint(pointMeta, wirePointKeys, other.wireId, null, point);
+							segmentNodes.get(segment.index)?.add(key);
+							segmentNodes.get(otherIndex)?.add(key);
+						});
+					});
+				});
+
+				pins.forEach((pin) => {
+					const key = recordPoint(pointMeta, wirePointKeys, null, pin.key, { x: pin.x, y: pin.y });
+					const touchingSegments = querySegmentsAtPoint(index, pin);
+					touchingSegments.forEach((segmentIndex) => {
+						const segment = segments[segmentIndex];
+						if (!segment) {
+							return;
+						}
+						if (!isPointOnSegment(pin, segment)) {
+							return;
+						}
+						recordPoint(pointMeta, wirePointKeys, segment.wireId, pin.key, { x: pin.x, y: pin.y });
+						segmentNodes.get(segmentIndex)?.add(key);
+					});
+				});
+
+				const uf = new UnionFind();
+				pointMeta.forEach((_, key) => uf.add(key));
+				segments.forEach((segment) => {
+					const nodes = segmentNodes.get(segment.index);
+					if (!nodes || nodes.size < 2) {
+						return;
+					}
+					const ordered = orderSegmentNodes(nodes, pointMeta, segment);
+					const head = ordered[0];
+					for (let i = 1; i < ordered.length; i += 1) {
+						uf.union(head, ordered[i]);
+					}
+				});
+
+				const groundRoots = new Set();
+				pins.forEach((pin) => {
+					if (!pin.isGround) {
+						return;
+					}
+					const key = pointKey(pin.x, pin.y);
+					if (!pointMeta.has(key)) {
+						return;
+					}
+					groundRoots.add(uf.find(key));
+				});
+
+				const rootToName = new Map();
+				let nextNetIndex = 1;
+				pointMeta.forEach((meta, key) => {
+					const root = uf.find(key);
+					if (!rootToName.has(root)) {
+						const label = groundRoots.has(root) ? "0" : `N${String(nextNetIndex).padStart(3, "0")}`;
+						rootToName.set(root, label);
+						if (!groundRoots.has(root)) {
+							nextNetIndex += 1;
+						}
+					}
+				});
+
+				const nets = new Map();
+				const pinToNet = new Map();
+				const wireToNet = new Map();
+				const junctions = [];
+				pointMeta.forEach((meta, key) => {
+					const root = uf.find(key);
+					const netName = rootToName.get(root);
+					if (!netName) {
+						return;
+					}
+					let net = nets.get(netName);
+					if (!net) {
+						net = { id: netName, name: netName, wires: new Set(), pins: new Set(), points: new Set() };
+						nets.set(netName, net);
+					}
+					net.points.add(key);
+					meta.wires.forEach((wireId) => net.wires.add(wireId));
+					meta.pins.forEach((pinKey) => net.pins.add(pinKey));
+					if (meta.wires.size > 1) {
+						junctions.push({ x: meta.x, y: meta.y, netId: netName });
+					}
+				});
+
+				pins.forEach((pin) => {
+					const key = pointKey(pin.x, pin.y);
+					const meta = pointMeta.get(key);
+					if (!meta) {
+						return;
+					}
+					const connected = meta.wires.size > 0 || meta.pins.size > 1 || pin.isGround;
+					if (!connected) {
+						return;
+					}
+					const root = uf.find(key);
+					const netName = rootToName.get(root);
+					if (netName) {
+						pinToNet.set(pin.key, netName);
+					}
+				});
+
+				wirePointKeys.forEach((pointKeys, wireId) => {
+					const roots = new Set();
+					pointKeys.forEach((key) => roots.add(uf.find(key)));
+					const [firstRoot] = Array.from(roots);
+					if (!firstRoot) {
+						return;
+					}
+					const netName = rootToName.get(firstRoot);
+					if (netName) {
+						wireToNet.set(wireId, netName);
+					}
+				});
+
+				return { nets, pinToNet, wireToNet, junctions };
+			}
+
+			function collectWireSegments(wires) {
+				const segments = [];
+				wires.forEach((wire) => {
+					if (!wire.id) {
+						wire.id = state.nextWireId++;
+					}
+					const path = getWirePoints(wire);
+					for (let i = 0; i < path.length - 1; i += 1) {
+						const start = path[i];
+						const end = path[i + 1];
+						const orientation = inferSegmentOrientation(start, end);
+						if (!orientation) {
+							continue;
+						}
+						segments.push({
+							wireId: wire.id,
+							start: { x: start.x, y: start.y },
+							end: { x: end.x, y: end.y },
+							orientation,
+						});
+					}
+				});
+				return segments;
+			}
+
+			function collectPlacedPins(placements, library) {
+				const results = [];
+				placements.forEach((placement) => {
+					const component = library[placement.type];
+					if (!component) {
+						return;
+					}
+					const placementId = ensurePlacementId(placement);
+					(component.pins || []).forEach((pin) => {
+						const position = getPinWorldPosition(placement, pin);
+						if (!position) {
+							return;
+						}
+						results.push({
+							key: makePinKey(placementId, pin.id),
+							x: position.x,
+							y: position.y,
+							isGround: isGroundComponent(component),
+						});
+					});
+				});
+				return results;
+			}
+
+			function createSpatialIndex() {
+				const buckets = new Map();
+				return {
+					buckets,
+				};
+			}
+
+			function addSegmentToIndex(index, segment) {
+				const minX = Math.min(segment.start.x, segment.end.x);
+				const maxX = Math.max(segment.start.x, segment.end.x);
+				const minY = Math.min(segment.start.y, segment.end.y);
+				const maxY = Math.max(segment.start.y, segment.end.y);
+				const cells = getCellsForBounds(minX, minY, maxX, maxY);
+				cells.forEach((cell) => {
+					const existing = index.buckets.get(cell) || new Set();
+					existing.add(segment.index);
+					index.buckets.set(cell, existing);
+				});
+			}
+
+			function querySegmentsForSegment(index, segment) {
+				const minX = Math.min(segment.start.x, segment.end.x);
+				const maxX = Math.max(segment.start.x, segment.end.x);
+				const minY = Math.min(segment.start.y, segment.end.y);
+				const maxY = Math.max(segment.start.y, segment.end.y);
+				const cells = getCellsForBounds(minX, minY, maxX, maxY);
+				const candidates = new Set();
+				cells.forEach((cell) => {
+					const bucket = index.buckets.get(cell);
+					if (bucket) {
+						bucket.forEach((id) => candidates.add(id));
+					}
+				});
+				return candidates;
+			}
+
+			function querySegmentsAtPoint(index, point) {
+				const cell = getCellForPoint(point.x, point.y);
+				const bucket = index.buckets.get(cell) || new Set();
+				return bucket;
+			}
+
+			function getCellsForBounds(minX, minY, maxX, maxY) {
+				const cells = [];
+				const startX = Math.floor(minX / NET_CELL_SIZE);
+				const endX = Math.floor(maxX / NET_CELL_SIZE);
+				const startY = Math.floor(minY / NET_CELL_SIZE);
+				const endY = Math.floor(maxY / NET_CELL_SIZE);
+				for (let x = startX; x <= endX; x += 1) {
+					for (let y = startY; y <= endY; y += 1) {
+						cells.push(`${x},${y}`);
+					}
+				}
+				return cells;
+			}
+
+			function getCellForPoint(x, y) {
+				const cx = Math.floor(x / NET_CELL_SIZE);
+				const cy = Math.floor(y / NET_CELL_SIZE);
+				return `${cx},${cy}`;
+			}
+
+			function findSegmentIntersections(a, b) {
+				if (!a || !b || !a.orientation || !b.orientation) {
+					return [];
+				}
+				if (a.orientation === b.orientation) {
+					if (a.orientation === "horizontal" && a.start.y === b.start.y) {
+						return overlappingRangePoints(a.start.x, a.end.x, b.start.x, b.end.x, a.start.y, true);
+					}
+					if (a.orientation === "vertical" && a.start.x === b.start.x) {
+						return overlappingRangePoints(a.start.y, a.end.y, b.start.y, b.end.y, a.start.x, false);
+					}
+					return [];
+				}
+				const vertical = a.orientation === "vertical" ? a : b;
+				const horizontal = a.orientation === "horizontal" ? a : b;
+				const ix = vertical.start.x;
+				const iy = horizontal.start.y;
+				const withinX = between(ix, horizontal.start.x, horizontal.end.x);
+				const withinY = between(iy, vertical.start.y, vertical.end.y);
+				if (withinX && withinY) {
+					return [{ x: ix, y: iy }];
+				}
+				return [];
+			}
+
+			function overlappingRangePoints(a1, a2, b1, b2, constant, isHorizontal) {
+				const minA = Math.min(a1, a2);
+				const maxA = Math.max(a1, a2);
+				const minB = Math.min(b1, b2);
+				const maxB = Math.max(b1, b2);
+				const start = Math.max(minA, minB);
+				const end = Math.min(maxA, maxB);
+				if (end < start) {
+					return [];
+				}
+				if (start === end) {
+					return [isHorizontal ? { x: start, y: constant } : { x: constant, y: start }];
+				}
+				return [
+					isHorizontal ? { x: start, y: constant } : { x: constant, y: start },
+					isHorizontal ? { x: end, y: constant } : { x: constant, y: end },
+				];
+			}
+
+			function recordPoint(pointMeta, wirePointKeys, wireId, pinKey, point) {
+				const key = pointKey(point.x, point.y);
+				let meta = pointMeta.get(key);
+				if (!meta) {
+					meta = { x: point.x, y: point.y, wires: new Set(), pins: new Set() };
+					pointMeta.set(key, meta);
+				}
+				if (wireId != null) {
+					meta.wires.add(wireId);
+					let wireSet = wirePointKeys.get(wireId);
+					if (!wireSet) {
+						wireSet = new Set();
+						wirePointKeys.set(wireId, wireSet);
+					}
+					wireSet.add(key);
+				}
+				if (pinKey) {
+					meta.pins.add(pinKey);
+				}
+				return key;
+			}
+
+			function registerSegmentEndpoint(segmentNodes, pointMeta, wirePointKeys, segmentIndex, wireId, point) {
+				const key = recordPoint(pointMeta, wirePointKeys, wireId, null, point);
+				const entry = segmentNodes.get(segmentIndex);
+				if (entry) {
+					entry.add(key);
+				}
+			}
+
+			function orderSegmentNodes(nodes, pointMeta, segment) {
+				const ordered = Array.from(nodes).map((key) => {
+					const meta = pointMeta.get(key);
+					return { key, meta };
+				});
+				const axis = segment.orientation === "horizontal" ? "x" : "y";
+				ordered.sort((a, b) => (a.meta ? a.meta[axis] : 0) - (b.meta ? b.meta[axis] : 0));
+				return ordered.map((entry) => entry.key);
+			}
+
+			function isPointOnSegment(point, segment) {
+				if (!point || !segment) {
+					return false;
+				}
+				const onX = between(point.x, segment.start.x, segment.end.x);
+				const onY = between(point.y, segment.start.y, segment.end.y);
+				if (segment.orientation === "horizontal") {
+					return onX && point.y === segment.start.y;
+				}
+				if (segment.orientation === "vertical") {
+					return onY && point.x === segment.start.x;
+				}
+				return false;
+			}
+
+			function between(value, start, end) {
+				const min = Math.min(start, end);
+				const max = Math.max(start, end);
+				return value >= min - Number.EPSILON && value <= max + Number.EPSILON;
+			}
+
+			function pointKey(x, y) {
+				return `${x},${y}`;
 			}
 
 			function updateNetlist() {
 				if (!state.ready) {
 					state.netlistText = "* Component library loading...";
 					state.referenceMap = Object.create(null);
+					state.nets = new Map();
+					state.pinToNet = new Map();
+					state.wireToNet = new Map();
+					state.junctionPoints = [];
 					syncNetlistOutput();
 					return;
 				}
+				rebuildConnectivity();
 				state.referenceMap = Object.create(null);
 				state.netlistText = buildNetlistText();
 				syncNetlistOutput();
@@ -951,7 +1617,7 @@ const GRID_SIZE = 5;
 			}
 
 			function buildNetlistText() {
-				const pinToNet = buildNetAssignments();
+				const pinToNet = state.pinToNet || new Map();
 				const prefixCounters = new Map();
 				const lines = [];
 				const referenceMap = state.referenceMap || Object.create(null);
@@ -981,58 +1647,6 @@ const GRID_SIZE = 5;
 				}
 				lines.unshift("* Auto-generated SPICE netlist");
 				return lines.join("\n");
-			}
-
-			function buildNetAssignments() {
-				const uf = new UnionFind();
-				const pinRefs = [];
-				const groundPinKeys = new Set();
-				state.placements.forEach((placement) => {
-					const component = state.library[placement.type];
-					if (!component) {
-						return;
-					}
-					const placementId = ensurePlacementId(placement);
-					const isGround = isGroundComponent(component);
-					(component.pins || []).forEach((pin) => {
-						const key = makePinKey(placementId, pin.id);
-						pinRefs.push(key);
-						uf.add(key);
-						if (isGround) {
-							groundPinKeys.add(key);
-						}
-					});
-				});
-				state.wires.forEach((wire) => {
-					const fromKey = makePinKey(wire.from.placementId, wire.from.pinId);
-					const toKey = makePinKey(wire.to.placementId, wire.to.pinId);
-					uf.add(fromKey);
-					uf.add(toKey);
-					uf.union(fromKey, toKey);
-				});
-				const pinToNet = new Map();
-				const rootToLabel = new Map();
-				const groundRoots = new Set();
-				groundPinKeys.forEach((key) => {
-					const root = uf.find(key);
-					groundRoots.add(root);
-				});
-				let nextLabelIndex = 1;
-				pinRefs.forEach((key) => {
-					const root = uf.find(key);
-					let label = rootToLabel.get(root);
-					if (!label) {
-						if (groundRoots.has(root)) {
-							label = "0";
-						} else {
-							label = `N${String(nextLabelIndex).padStart(3, "0")}`;
-							nextLabelIndex += 1;
-						}
-						rootToLabel.set(root, label);
-					}
-					pinToNet.set(key, label);
-				});
-				return pinToNet;
 			}
 
 			function defaultComponentValue(prefix) {
@@ -1355,21 +1969,62 @@ const GRID_SIZE = 5;
 
 			function drawWires(scale) {
 				ctx.save();
-				ctx.lineWidth = Math.max(2 / scale, 1 / scale);
 				ctx.lineJoin = "round";
 				ctx.lineCap = "round";
-				ctx.strokeStyle = "#0f172a";
-				state.wires.forEach((wire) => drawWirePath(wire.path));
+				const hoverNet = state.hoverNetId;
+				const wireNetMap = state.wireToNet || new Map();
+				const normalStroke = "#0f172a";
+				const baseWidth = Math.max(2 / scale, 1 / scale);
+				ctx.lineWidth = baseWidth;
+				state.wires.forEach((wire) => {
+					const netId = wireNetMap.get(wire.id) || null;
+					if (hoverNet && netId === hoverNet) {
+						return;
+					}
+					ctx.strokeStyle = normalStroke;
+					drawWirePath(getWirePoints(wire));
+				});
+				if (hoverNet) {
+					ctx.lineWidth = Math.max(baseWidth * 1.5, 1.4 / scale);
+					ctx.strokeStyle = HOVER_NET_COLOR;
+					state.wires.forEach((wire) => {
+						const netId = wireNetMap.get(wire.id) || null;
+						if (netId !== hoverNet) {
+							return;
+						}
+						drawWirePath(getWirePoints(wire));
+					});
+				}
 				if (isWireMode() && state.pendingWire) {
 					const previewPath = getPendingWirePreviewPath();
 					if (previewPath) {
 						ctx.save();
 						ctx.setLineDash([8 / scale, 6 / scale]);
-						ctx.strokeStyle = "#2563eb";
+						ctx.strokeStyle = HOVER_NET_COLOR;
 						drawWirePath(previewPath);
 						ctx.restore();
 					}
 				}
+				drawJunctionDots(scale, hoverNet);
+				ctx.restore();
+			}
+
+			function drawJunctionDots(scale, hoverNet) {
+				if (!Array.isArray(state.junctionPoints) || !state.junctionPoints.length) {
+					return;
+				}
+				const radius = JUNCTION_RADIUS / scale;
+				ctx.save();
+				ctx.lineWidth = 1 / scale;
+				state.junctionPoints.forEach((junction) => {
+					const highlighted = hoverNet && junction.netId === hoverNet;
+					ctx.fillStyle = highlighted ? HOVER_NET_COLOR : "#0f172a";
+					ctx.strokeStyle = highlighted ? "#dbeafe" : "#f8fafc";
+					ctx.beginPath();
+					ctx.arc(junction.x, junction.y, radius, 0, Math.PI * 2);
+					ctx.fill();
+					ctx.stroke();
+				});
 				ctx.restore();
 			}
 
@@ -1392,6 +2047,8 @@ const GRID_SIZE = 5;
 					return;
 				}
 				const spriteMeta = getSpriteMeta(component);
+				const hoverNet = state.hoverNetId;
+				const pinNetMap = state.pinToNet || new Map();
 
 				const halfWidth = component.size.width / 2;
 				const halfHeight = component.size.height / 2;
@@ -1460,8 +2117,6 @@ const GRID_SIZE = 5;
 					const pinRadius = 2.2 / scale;
 					const pinStroke = 1 / scale;
 					ctx.save();
-					ctx.fillStyle = "#0f172a";
-					ctx.strokeStyle = "#f8fafc";
 					ctx.lineWidth = pinStroke;
 					pins.forEach((pin) => {
 						if (!pin || !pin.position) {
@@ -1469,6 +2124,11 @@ const GRID_SIZE = 5;
 						}
 						const pinX = localDrawX + pin.position.x;
 						const pinY = localDrawY + pin.position.y;
+						const pinKey = makePinKey(placementId, pin.id);
+						const pinNetId = pinNetMap.get(pinKey) || null;
+						const highlighted = hoverNet && pinNetId === hoverNet;
+						ctx.fillStyle = highlighted ? HOVER_NET_COLOR : "#0f172a";
+						ctx.strokeStyle = highlighted ? "#dbeafe" : "#f8fafc";
 						ctx.beginPath();
 						ctx.arc(pinX, pinY, pinRadius, 0, Math.PI * 2);
 						ctx.fill();
