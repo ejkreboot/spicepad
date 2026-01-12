@@ -1262,6 +1262,26 @@ const GRID_SIZE = 5;
 					});
 				});
 
+				segments.forEach((segment) => {
+					const endpoints = [segment.start, segment.end];
+					endpoints.forEach((pt) => {
+						const neighbors = querySegmentsAtPoint(index, pt);
+						neighbors.forEach((otherIndex) => {
+							if (otherIndex === segment.index) {
+								return;
+							}
+							const other = segments[otherIndex];
+							if (!isPointOnSegment(pt, other)) {
+								return;
+							}
+							const key = recordPoint(pointMeta, wirePointKeys, segment.wireId, null, pt);
+							recordPoint(pointMeta, wirePointKeys, other.wireId, null, pt);
+							segmentNodes.get(segment.index)?.add(key);
+							segmentNodes.get(otherIndex)?.add(key);
+						});
+					});
+				});
+
 				pins.forEach((pin) => {
 					const key = recordPoint(pointMeta, wirePointKeys, null, pin.key, { x: pin.x, y: pin.y });
 					const touchingSegments = querySegmentsAtPoint(index, pin);
@@ -1495,16 +1515,6 @@ const GRID_SIZE = 5;
 					if (a.orientation === "vertical" && a.start.x === b.start.x) {
 						return overlappingRangePoints(a.start.y, a.end.y, b.start.y, b.end.y, a.start.x, false);
 					}
-					return [];
-				}
-				const vertical = a.orientation === "vertical" ? a : b;
-				const horizontal = a.orientation === "horizontal" ? a : b;
-				const ix = vertical.start.x;
-				const iy = horizontal.start.y;
-				const withinX = between(ix, horizontal.start.x, horizontal.end.x);
-				const withinY = between(iy, vertical.start.y, vertical.end.y);
-				if (withinX && withinY) {
-					return [{ x: ix, y: iy }];
 				}
 				return [];
 			}
