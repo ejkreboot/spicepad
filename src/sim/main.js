@@ -9,6 +9,7 @@ const GRID_SIZE = 5;
 			const TOOL_WIRE = "wire";
 			const TOOL_DELETE = "delete";
 			const PIN_HIT_RADIUS = 10;
+			const DRAG_THRESHOLD = 4;
 			const canvas = document.getElementById("editorCanvas");
 			const ctx = canvas.getContext("2d");
 			const palette = document.getElementById("componentPalette");
@@ -25,8 +26,10 @@ const GRID_SIZE = 5;
 				nextWireId: 1,
 				selected: null,
 				ready: false,
-				dragging: null,
-				dragPointerId: null,
+				selectedPlacements: new Set(),
+				selectionBox: null,
+				selectionDrag: null,
+				pendingPlacement: null,
 				zoom: 1,
 				panX: 0,
 				panY: 0,
@@ -43,6 +46,7 @@ const GRID_SIZE = 5;
 
 				document.addEventListener("DOMContentLoaded", () => {
 				loadComponentLibrary();
+				setupCanvasResizeHandling();
 				canvas.addEventListener("pointerdown", handlePointerDown);
 				canvas.addEventListener("pointermove", handlePointerMove);
 				canvas.addEventListener("pointerup", handlePointerUp);
@@ -74,6 +78,8 @@ const GRID_SIZE = 5;
 					x: (event.clientX - metrics.rect.left) * metrics.scaleX,
 					y: (event.clientY - metrics.rect.top) * metrics.scaleY,
 				};
+				// Ensure the backing store matches the displayed size before first render.
+				resizeCanvasToDisplaySize();
 				const focusWorld = canvasToWorld(canvasPoint.x, canvasPoint.y);
 				const delta = -event.deltaY;
 				const zoomFactor = Math.exp(delta * ZOOM_SENSITIVITY);
@@ -198,15 +204,11 @@ const GRID_SIZE = 5;
 				const hitIndex = findPlacementAt(point);
 				if (hitIndex !== -1) {
 					const hitPlacement = state.placements[hitIndex];
-					state.dragging = {
-						index: hitIndex,
-						offsetX: point.x - hitPlacement.x,
-						offsetY: point.y - hitPlacement.y,
-					};
-					state.dragPointerId = event.pointerId;
-					if (typeof canvas.setPointerCapture === "function") {
-						canvas.setPointerCapture(event.pointerId);
+					const placementId = ensurePlacementId(hitPlacement);
+					if (!isPlacementSelected(placementId)) {
+						setSelection([placementId]);
 					}
+					beginSelectionDrag(point, event.pointerId);
 					event.preventDefault();
 					return;
 				}
@@ -214,24 +216,8 @@ const GRID_SIZE = 5;
 				if (!state.selected) {
 					return;
 				}
-				const snapped = {
-					x: snapToGrid(point.x),
-					y: snapToGrid(point.y),
-				};
 
-				const placementId = state.nextPlacementId++;
-				state.placements.push({
-					id: placementId,
-					type: state.selected,
-					x: snapped.x,
-					y: snapped.y,
-					value: resolveComponentValue(state.selected),
-					rotation: 0,
-				});
-				state.hoverPlacementId = placementId;
-
-				updateNetlist();
-				requestRender();
+				beginPendingPlacement(point, event.pointerId);
 			}
 
 			function handleWirePointerDown(point) {
@@ -404,23 +390,28 @@ const GRID_SIZE = 5;
 				updatePointerWorld(point);
 				updateHoverPlacement(point);
 
-				if (!state.dragging || event.pointerId !== state.dragPointerId) {
+				if (state.selectionDrag && event.pointerId === state.selectionDrag.pointerId) {
+					updateSelectionDrag(point);
+					event.preventDefault();
 					return;
 				}
 
-				const placement = state.placements[state.dragging.index];
-				if (!placement) {
-					return;
+				if (state.pendingPlacement && event.pointerId === state.pendingPlacement.pointerId) {
+					const dragDistance = Math.hypot(
+						point.x - state.pendingPlacement.startPoint.x,
+						point.y - state.pendingPlacement.startPoint.y
+					);
+					if (dragDistance >= DRAG_THRESHOLD) {
+						// Convert to selection box drag.
+						startSelectionBox(state.pendingPlacement.startPoint, state.pendingPlacement.pointerId);
+						state.pendingPlacement = null;
+					}
 				}
 
-				const nextX = snapToGrid(point.x - state.dragging.offsetX);
-				const nextY = snapToGrid(point.y - state.dragging.offsetY);
-				if (placement.x !== nextX || placement.y !== nextY) {
-					placement.x = nextX;
-					placement.y = nextY;
-					const placementId = ensurePlacementId(placement);
-					rerouteWiresForPlacement(placementId);
-					requestRender();
+				if (state.selectionBox) {
+					updateSelectionBox(point);
+					event.preventDefault();
+					return;
 				}
 			}
 
@@ -430,20 +421,202 @@ const GRID_SIZE = 5;
 					return;
 				}
 
-				if (!state.dragging || event.pointerId !== state.dragPointerId) {
+				if (state.selectionDrag && event.pointerId === state.selectionDrag.pointerId) {
+					endSelectionDrag();
 					return;
 				}
 
-				if (state.dragPointerId !== null && typeof canvas.releasePointerCapture === "function") {
-					canvas.releasePointerCapture(state.dragPointerId);
+				if (state.selectionBox) {
+					finalizeSelectionBox();
+					return;
 				}
-				state.dragging = null;
-				state.dragPointerId = null;
+
+				if (state.pendingPlacement && event.pointerId === state.pendingPlacement.pointerId) {
+					placePendingComponent();
+					return;
+				}
 			}
 
 			function handlePointerLeave() {
 				clearPointerWorld();
 				clearHoverPlacement();
+				state.selectionBox = null;
+				state.pendingPlacement = null;
+			}
+
+			function isPlacementSelected(placementId) {
+				return state.selectedPlacements && state.selectedPlacements.has(placementId);
+			}
+
+			function setSelection(placementIds) {
+				state.selectedPlacements = new Set(Array.isArray(placementIds) ? placementIds : []);
+				requestRender();
+			}
+
+			function clearSelection() {
+				if (state.selectedPlacements.size) {
+					state.selectedPlacements.clear();
+					requestRender();
+				}
+			}
+
+			function beginPendingPlacement(point, pointerId) {
+				const snapped = {
+					x: snapToGrid(point.x),
+					y: snapToGrid(point.y),
+				};
+				state.pendingPlacement = {
+					pointerId,
+					startPoint: point,
+					snapped,
+				};
+				if (typeof canvas.setPointerCapture === "function") {
+					canvas.setPointerCapture(pointerId);
+				}
+			}
+
+			function placePendingComponent() {
+				const pending = state.pendingPlacement;
+				state.pendingPlacement = null;
+				if (!pending || !state.selected) {
+					return;
+				}
+				const placementId = state.nextPlacementId++;
+				state.placements.push({
+					id: placementId,
+					type: state.selected,
+					x: pending.snapped.x,
+					y: pending.snapped.y,
+					value: resolveComponentValue(state.selected),
+					rotation: 0,
+				});
+				state.hoverPlacementId = placementId;
+				if (typeof canvas.releasePointerCapture === "function" && pending.pointerId != null) {
+					canvas.releasePointerCapture(pending.pointerId);
+				}
+				updateNetlist();
+				requestRender();
+			}
+
+			function beginSelectionDrag(point, pointerId) {
+				const selectedIds = Array.from(state.selectedPlacements);
+				const baseline = new Map();
+				state.placements.forEach((placement) => {
+					if (placement && isPlacementSelected(placement.id)) {
+						baseline.set(placement.id, { x: placement.x, y: placement.y });
+					}
+				});
+				state.selectionDrag = {
+					pointerId,
+					startPoint: point,
+					baseline,
+				};
+				if (typeof canvas.setPointerCapture === "function") {
+					canvas.setPointerCapture(pointerId);
+				}
+			}
+
+			function updateSelectionDrag(point) {
+				if (!state.selectionDrag) {
+					return;
+				}
+				const deltaX = snapDelta(point.x - state.selectionDrag.startPoint.x);
+				const deltaY = snapDelta(point.y - state.selectionDrag.startPoint.y);
+				let moved = false;
+				state.selectionDrag.baseline.forEach((base, placementId) => {
+					const placement = findPlacementById(placementId);
+					if (!placement) {
+						return;
+					}
+					const nextX = base.x + deltaX;
+					const nextY = base.y + deltaY;
+					if (placement.x !== nextX || placement.y !== nextY) {
+						placement.x = nextX;
+						placement.y = nextY;
+						moved = true;
+					}
+				});
+				if (moved) {
+					// Reroute wires connected to any moved placement.
+					state.selectionDrag.baseline.forEach((_, placementId) => {
+						rerouteWiresForPlacement(placementId);
+					});
+					requestRender();
+				}
+			}
+
+			function endSelectionDrag() {
+				if (!state.selectionDrag) {
+					return;
+				}
+				if (typeof canvas.releasePointerCapture === "function" && state.selectionDrag.pointerId != null) {
+					canvas.releasePointerCapture(state.selectionDrag.pointerId);
+				}
+				state.selectionDrag = null;
+			}
+
+			function startSelectionBox(startPoint, pointerId) {
+				clearSelection();
+				state.selectionBox = {
+					start: {
+						x: snapToGrid(startPoint.x),
+						y: snapToGrid(startPoint.y),
+					},
+					current: {
+						x: snapToGrid(startPoint.x),
+						y: snapToGrid(startPoint.y),
+					},
+					pointerId: pointerId ?? null,
+				};
+			}
+
+			function updateSelectionBox(point) {
+				if (!state.selectionBox) {
+					return;
+				}
+				state.selectionBox.current = {
+					x: snapToGrid(point.x),
+					y: snapToGrid(point.y),
+				};
+				requestRender();
+			}
+
+			function finalizeSelectionBox() {
+				if (!state.selectionBox) {
+					return;
+				}
+				const { start, current } = state.selectionBox;
+				if (typeof canvas.releasePointerCapture === "function" && state.selectionBox.pointerId != null) {
+					canvas.releasePointerCapture(state.selectionBox.pointerId);
+				}
+				state.selectionBox = null;
+				const minX = Math.min(start.x, current.x);
+				const maxX = Math.max(start.x, current.x);
+				const minY = Math.min(start.y, current.y);
+				const maxY = Math.max(start.y, current.y);
+				const selectedIds = [];
+				state.placements.forEach((placement) => {
+					const component = state.library[placement.type];
+					if (!component) {
+						return;
+					}
+					const halfW = component.size.width / 2;
+					const halfH = component.size.height / 2;
+					const pxMin = placement.x - halfW;
+					const pxMax = placement.x + halfW;
+					const pyMin = placement.y - halfH;
+					const pyMax = placement.y + halfH;
+					const overlaps = pxMax >= minX && pxMin <= maxX && pyMax >= minY && pyMin <= maxY;
+					if (overlaps) {
+						selectedIds.push(ensurePlacementId(placement));
+					}
+				});
+				setSelection(selectedIds);
+				requestRender();
+			}
+
+			function snapDelta(delta) {
+				return Math.round(delta / GRID_SIZE) * GRID_SIZE;
 			}
 
 			function handleDoubleClick(event) {
@@ -618,6 +791,9 @@ const GRID_SIZE = 5;
 				if (!placement) {
 					state.hoverPlacementId = null;
 					return false;
+				}
+				if (!isPlacementSelected(placement.id)) {
+					setSelection([placement.id]);
 				}
 				rotatePlacement(placement, 90);
 				return true;
@@ -1136,7 +1312,12 @@ const GRID_SIZE = 5;
 			}
 
 			function render() {
+				const metrics = getCanvasMetrics();
+				const baseScale = metrics.dpr || 1;
+				// Reset any prior transforms before clearing/drawing.
+				ctx.setTransform(1, 0, 0, 1, 0, 0);
 				ctx.clearRect(0, 0, canvas.width, canvas.height);
+				ctx.setTransform(baseScale, 0, 0, baseScale, 0, 0);
 				const scale = state.zoom;
 				ctx.save();
 				ctx.scale(scale, scale);
@@ -1144,7 +1325,10 @@ const GRID_SIZE = 5;
 				drawCrosshairGuides(scale);
 				drawWires(scale);
 				state.placements.forEach((instance) => drawComponent(instance, scale));
+				drawSelectionBox(scale);
 				ctx.restore();
+				// Return to identity to avoid leaking transforms into future clears.
+				ctx.setTransform(1, 0, 0, 1, 0, 0);
 			}
 
 			function drawCrosshairGuides(scale) {
@@ -1268,6 +1452,9 @@ const GRID_SIZE = 5;
 				const drawW = spriteMeta ? spriteMeta.viewBox.width * scaleX : component.size.width;
 				const drawH = spriteMeta ? spriteMeta.viewBox.height * scaleY : component.size.height;
 				ctx.drawImage(sprite, drawX, drawY, drawW, drawH);
+				if (isPlacementSelected(placementId)) {
+					drawSelectionOutline(component, localDrawX, localDrawY, scale);
+				}
 				const pins = component.pins || [];
 				if (pins.length) {
 					const pinRadius = 2.2 / scale;
@@ -1341,6 +1528,17 @@ const GRID_SIZE = 5;
 				}
 			}
 
+			function drawSelectionOutline(component, localDrawX, localDrawY, scale) {
+				const halfWidth = component.size.width / 2;
+				const halfHeight = component.size.height / 2;
+				ctx.save();
+				ctx.strokeStyle = "#2563eb";
+				ctx.lineWidth = 1.2 / scale;
+				ctx.setLineDash([4 / scale, 2 / scale]);
+				ctx.strokeRect(localDrawX, localDrawY, halfWidth * 2, halfHeight * 2);
+				ctx.restore();
+			}
+
 			function handleKeyDown(event) {
 				if (event.code === "Escape" && !shouldIgnoreKey(event)) {
 					if (state.pendingWire) {
@@ -1384,11 +1582,64 @@ const GRID_SIZE = 5;
 
 			function getCanvasMetrics() {
 				const rect = canvas.getBoundingClientRect();
-				return {
-					rect,
-					scaleX: canvas.width / rect.width,
-					scaleY: canvas.height / rect.height,
+				const dpr = window.devicePixelRatio || 1;
+				// scaleX/scaleY convert from CSS pixels to canvas units (which track CSS px).
+				const scaleX = (canvas.width / dpr) / rect.width;
+				const scaleY = (canvas.height / dpr) / rect.height;
+				return { rect, dpr, scaleX, scaleY };
+			}
+
+			function drawSelectionBox(scale) {
+				if (!state.selectionBox) {
+					return;
+				}
+				const { start, current } = state.selectionBox;
+				const x = Math.min(start.x, current.x);
+				const y = Math.min(start.y, current.y);
+				const w = Math.abs(start.x - current.x);
+				const h = Math.abs(start.y - current.y);
+				ctx.save();
+				ctx.fillStyle = "rgba(37, 99, 235, 0.12)";
+				ctx.strokeStyle = "rgba(37, 99, 235, 0.9)";
+				ctx.lineWidth = 1 / scale;
+				ctx.setLineDash([4 / scale, 2 / scale]);
+				ctx.beginPath();
+				ctx.rect(x, y, w, h);
+				ctx.fill();
+				ctx.stroke();
+				ctx.restore();
+			}
+
+			function resizeCanvasToDisplaySize() {
+				const dpr = window.devicePixelRatio || 1;
+				const rect = canvas.getBoundingClientRect();
+				const width = Math.max(1, Math.round(rect.width));
+				const height = Math.max(1, Math.round(rect.height));
+				const displayWidth = Math.round(width * dpr);
+				const displayHeight = Math.round(height * dpr);
+				if (canvas.width !== displayWidth || canvas.height !== displayHeight) {
+					canvas.width = displayWidth;
+					canvas.height = displayHeight;
+					canvas.style.width = `${width}px`;
+					canvas.style.height = `${height}px`;
+					return true;
+				}
+				return false;
+			}
+
+			function setupCanvasResizeHandling() {
+				const resizeHandler = () => {
+					const resized = resizeCanvasToDisplaySize();
+					if (resized) {
+						requestRender();
+					}
 				};
+				resizeHandler();
+				if (typeof ResizeObserver === "function") {
+					const observer = new ResizeObserver(resizeHandler);
+					observer.observe(canvas);
+				}
+				window.addEventListener("resize", resizeHandler);
 			}
 
 			function canvasToWorld(canvasX, canvasY) {

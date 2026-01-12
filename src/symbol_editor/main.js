@@ -38,6 +38,7 @@ import { deleteSymbol as deleteSymbolFromStore, loadLibrary, replaceLibrary, sav
         const MIN_ZOOM = 1;
         const MAX_ZOOM = 10;
         const DEFAULT_PIN_LABEL_OFFSET = { x: 12, y: -12 };
+        const PIN_LABEL_BASE_OFFSET = 3;
 
         const canvas = document.getElementById('canvas');
         const ctx = canvas.getContext('2d');
@@ -130,7 +131,11 @@ import { deleteSymbol as deleteSymbolFromStore, loadLibrary, replaceLibrary, sav
             if (!select) return;
             const keys = Object.keys(primitiveCatalog).sort();
             const previous = selectedPrefix || select.value || '';
-            select.innerHTML = keys.map(key => `<option value="${key}">${key}</option>`).join('');
+            select.innerHTML = keys.map(key => {
+                const name = primitiveCatalog[key]?.name;
+                const label = name ? `${key} - ${name}` : key;
+                return `<option value="${key}">${label}</option>`;
+            }).join('');
             if (previous && !keys.includes(previous)) {
                 const opt = document.createElement('option');
                 opt.value = previous;
@@ -557,8 +562,8 @@ import { deleteSymbol as deleteSymbolFromStore, loadLibrary, replaceLibrary, sav
             const prefixInput = document.getElementById('compPrefix');
             const defaultInput = document.getElementById('compDefault');
             const prefixText = (prefixInput?.value || '').trim() || 'DES';
-            const defaultText = (defaultInput?.value || '').trim() || 'VAL';
-            const hideValueMarker = defaultValueIsNull || defaultInput?.disabled;
+            const defaultText = (defaultInput?.value || '').trim();
+            const hideValueMarker = defaultValueIsNull || defaultInput?.disabled || defaultText === '';
             const hideDesignatorMarker = !prefixText || prefixText.toUpperCase() === 'GND';
             const orientationIndex = orientation === 0 ? 0 : 1;
             if (!hideDesignatorMarker) {
@@ -1851,11 +1856,34 @@ import { deleteSymbol as deleteSymbolFromStore, loadLibrary, replaceLibrary, sav
             pinLabelDragOffset = null;
         }
 
+        function getPinLabelOffset(pin) {
+            const px = pin?.position?.x ?? 0;
+            const py = pin?.position?.y ?? 0;
+            const compWidth = parseInt(document.getElementById('compWidth')?.value, 10) || 80;
+            const compHeight = parseInt(document.getElementById('compHeight')?.value, 10) || 40;
+            const centerX = compWidth / 2;
+            const centerY = compHeight / 2;
+
+            const deltaX = centerX - px;
+            const deltaY = centerY - py;
+
+            const offsetX = Math.abs(deltaX) < PIN_LABEL_BASE_OFFSET
+                ? PIN_LABEL_BASE_OFFSET
+                : (deltaX > 0 ? PIN_LABEL_BASE_OFFSET : -PIN_LABEL_BASE_OFFSET);
+
+            const offsetY = Math.abs(deltaY) < PIN_LABEL_BASE_OFFSET
+                ? -PIN_LABEL_BASE_OFFSET
+                : (deltaY > 0 ? PIN_LABEL_BASE_OFFSET : -PIN_LABEL_BASE_OFFSET);
+
+            return { x: offsetX, y: offsetY };
+        }
+
         function getDefaultPinLabelPosition(pin) {
             const source = pin?.position || { x: 0, y: 0 };
+            const offset = getPinLabelOffset(pin);
             return {
-                x: Math.round(source.x + DEFAULT_PIN_LABEL_OFFSET.x),
-                y: Math.round(source.y + DEFAULT_PIN_LABEL_OFFSET.y)
+                x: Math.round(source.x + offset.x),
+                y: Math.round(source.y + offset.y)
             };
         }
 
@@ -1882,8 +1910,9 @@ import { deleteSymbol as deleteSymbolFromStore, loadLibrary, replaceLibrary, sav
                 position: { x, y }
             };
             const labelSource = pin?.labelPosition;
-            const labelX = Number.isFinite(labelSource?.x) ? labelSource.x : x + DEFAULT_PIN_LABEL_OFFSET.x;
-            const labelY = Number.isFinite(labelSource?.y) ? labelSource.y : y + DEFAULT_PIN_LABEL_OFFSET.y;
+            const defaultOffset = getPinLabelOffset({ position: { x, y } });
+            const labelX = Number.isFinite(labelSource?.x) ? labelSource.x : x + defaultOffset.x;
+            const labelY = Number.isFinite(labelSource?.y) ? labelSource.y : y + defaultOffset.y;
             normalized.labelPosition = { x: Math.round(labelX), y: Math.round(labelY) };
             return normalized;
         }
@@ -2542,17 +2571,25 @@ import { deleteSymbol as deleteSymbolFromStore, loadLibrary, replaceLibrary, sav
                 } else if (el.type === 'circle') {
                     svgParts.push(`<circle cx="${el.cx + offsetX}" cy="${el.cy + offsetY}" r="${el.r}" fill="${el.filled ? '#000000' : 'none'}" stroke="#000000" stroke-width="${strokeWidth}"/>`);
                 } else if (el.type === 'arc') {
-                    const startX = el.cx + Math.cos(el.startAngle) * el.r;
-                    const startY = el.cy + Math.sin(el.startAngle) * el.r;
-                    const endX = el.cx + Math.cos(el.endAngle) * el.r;
-                    const endY = el.cy + Math.sin(el.endAngle) * el.r;
-                    let delta = el.endAngle - el.startAngle;
-                    while (delta <= -Math.PI * 2) delta += Math.PI * 2;
+                    // Normalize angles to mirror canvas rendering (clockwise, wrap end forward)
+                    let startAngle = el.startAngle;
+                    let endAngle = el.endAngle;
+                    let delta = endAngle - startAngle;
+                    if (delta < 0) {
+                        endAngle += Math.PI * 2;
+                        delta = endAngle - startAngle;
+                    }
                     while (delta >= Math.PI * 2) delta -= Math.PI * 2;
-                    const largeArcFlag = Math.abs(delta) > Math.PI ? 1 : 0;
-                    const sweepFlag = delta >= 0 ? 1 : 0;
+
+                    const startX = el.cx + Math.cos(startAngle) * el.r;
+                    const startY = el.cy + Math.sin(startAngle) * el.r;
+                    const endX = el.cx + Math.cos(endAngle) * el.r;
+                    const endY = el.cy + Math.sin(endAngle) * el.r;
+                    const largeArcFlag = delta > Math.PI ? 1 : 0;
+                    // Canvas arcs are clockwise; SVG sweepFlag=1 is clockwise
+                    const sweepFlag = 1;
                     const d = `M ${startX + offsetX} ${startY + offsetY} A ${el.r} ${el.r} 0 ${largeArcFlag} ${sweepFlag} ${endX + offsetX} ${endY + offsetY}`;
-                    svgParts.push(`<path data-arc="true" data-cx="${el.cx}" data-cy="${el.cy}" data-r="${el.r}" data-start="${el.startAngle}" data-end="${el.endAngle}" fill="none" stroke="#000000" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" d="${d}"/>`);
+                    svgParts.push(`<path data-arc="true" data-cx="${el.cx}" data-cy="${el.cy}" data-r="${el.r}" data-start="${startAngle}" data-end="${endAngle}" fill="none" stroke="#000000" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" d="${d}"/>`);
                 } else if (el.type === 'polygon' && el.points) {
                     const pts = el.points.map(p => `${p.x + offsetX},${p.y + offsetY}`).join(' ');
                     svgParts.push(`<polygon points="${pts}" fill="${el.filled ? '#000000' : 'none'}" stroke="#000000" stroke-width="${strokeWidth}" stroke-linejoin="round"/>`);

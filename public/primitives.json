@@ -1,8 +1,119 @@
 {
   "primitives": {
-    "R": { "defaultValue": "1k" },
-    "C": { "defaultValue": "1uF" },
-    "L": { "defaultValue": "1mH" },
-    "GND": { "defaultValue": null }
+    "R": {
+      "name": "Resistor",
+      "description": "Linear resistor",
+      "defaultValue": "1k"
+    },
+    "C": {
+      "name": "Capacitor",
+      "description": "Capacitor",
+      "defaultValue": "1u"
+    },
+    "L": {
+      "name": "Inductor",
+      "description": "Inductor",
+      "defaultValue": "1m"
+    },
+
+    "V": {
+      "name": "Voltage Source",
+      "description": "Independent voltage source (DC, AC, or transient)",
+      "defaultValue": "DC 5"
+    },
+    "I": {
+      "name": "Current Source",
+      "description": "Independent current source (DC, AC, or transient)",
+      "defaultValue": "DC 1m"
+    },
+
+    "D": {
+      "name": "Diode",
+      "description": "Semiconductor diode",
+      "defaultValue": "D"
+    },
+    "Q": {
+      "name": "BJT",
+      "description": "Bipolar junction transistor",
+      "defaultValue": "NPN"
+    },
+    "M": {
+      "name": "MOSFET",
+      "description": "Metal-oxide-semiconductor field-effect transistor",
+      "defaultValue": "NMOS"
+    },
+    "J": {
+      "name": "JFET",
+      "description": "Junction field-effect transistor",
+      "defaultValue": "NJF"
+    },
+
+    "Z": {
+      "name": "Impedance",
+      "description": "Frequency-dependent or arbitrary impedance",
+      "defaultValue": "1k"
+    },
+
+    "E": {
+      "name": "VCVS",
+      "description": "Voltage-controlled voltage source",
+      "defaultValue": "1"
+    },
+    "F": {
+      "name": "CCCS",
+      "description": "Current-controlled current source",
+      "defaultValue": "1"
+    },
+    "G": {
+      "name": "VCCS",
+      "description": "Voltage-controlled current source",
+      "defaultValue": "1"
+    },
+    "H": {
+      "name": "CCVS",
+      "description": "Current-controlled voltage source",
+      "defaultValue": "1"
+    },
+
+    "B": {
+      "name": "Behavioral Source",
+      "description": "Arbitrary behavioral voltage or current source",
+      "defaultValue": "V=0"
+    },
+
+    "T": {
+      "name": "Transmission Line",
+      "description": "Lossless or lossy transmission line",
+      "defaultValue": "TLINE"
+    },
+    "W": {
+      "name": "Transmission Line (W)",
+      "description": "Distributed transmission line element",
+      "defaultValue": "1n"
+    },
+    "S": {
+      "name": "Switch",
+      "description": "Voltage- or current-controlled switch",
+      "defaultValue": "SW"
+    },
+
+    "K": {
+      "name": "Mutual Inductance",
+      "description": "Magnetic coupling between inductors",
+      "defaultValue": "0.99"
+    },
+
+    "GND": {
+      "name": "Ground",
+      "description": "Reference node (node 0)",
+      "defaultValue": null
+    },
+
+    "X": {
+      "name": "Subcircuit",
+      "description": "User-defined subcircuit instance",
+      "defaultValue": "subckt_name"
+    }
   }
 }
+
