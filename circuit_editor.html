@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Circuit Editor - SpicePad</title>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
+    <link rel="stylesheet" href="/src/style.css">
+</head>
+<body>
+    <h1>Circuit Editor</h1>
+    
+    <div class="circuit-editor-container">
+        <div class="circuit-toolbar">
+            <button class="btn btn-secondary tool-btn active" data-tool="wire" title="Wire Tool (W)">
+                <span class="material-symbols-outlined">timeline</span>
+                Wire
+            </button>
+            <button class="btn btn-secondary tool-btn" data-tool="select" title="Select Tool (S)">
+                <span class="material-symbols-outlined">arrow_selector_tool</span>
+                Select
+            </button>
+            <div class="separator"></div>
+            <button class="btn btn-secondary" id="clear-btn" title="Clear All">
+                <span class="material-symbols-outlined">delete</span>
+                Clear
+            </button>
+            <div class="separator"></div>
+            <span class="zoom-indicator" id="zoom-indicator">100%</span>
+        </div>
+        
+        <div class="circuit-canvas-wrapper">
+            <canvas id="circuit-canvas"></canvas>
+            <div class="canvas-info">
+                <span id="coord-display">X: 0 Y: 0</span>
+                <span id="grid-display">Grid: 10</span>
+            </div>
+        </div>
+        
+        <div class="circuit-status-bar">
+            <span id="status-message">Ready</span>
+        </div>
+    </div>
+
+    <script type="module" src="/src/circuit_editor/main.js"></script>
+</body>
+</html>
