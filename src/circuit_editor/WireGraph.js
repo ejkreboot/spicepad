@@ -346,6 +346,14 @@ export class WireGraph {
                 
                 if (Math.abs(nodeA.x - nodeB.x) < 0.001 && Math.abs(nodeA.y - nodeB.y) < 0.001) {
                     // Merge nodeB into nodeA
+                    if (nodeB.isComponentPin && !nodeA.isComponentPin) {
+                        nodeA.isComponentPin = true;
+                        nodeA.componentId = nodeB.componentId;
+                        nodeA.pinId = nodeB.pinId;
+                        nodeA.isBend = false;
+                    } else if (!nodeA.isComponentPin && nodeB.isBend) {
+                        nodeA.isBend = true;
+                    }
                     merged.set(nodeB.id, nodeA.id);
                 }
             }

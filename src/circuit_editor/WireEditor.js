@@ -48,6 +48,7 @@ export class WireEditor {
         this.dragTarget = null;       // { type: 'node' | 'segment', id: number | string }
         this.dragStartWorld = null;   // { x, y } - world position where drag started
         this.dragStartPositions = null; // Original positions of nodes being dragged
+        this.dragMovedNodeIds = null; // Set of node IDs that are allowed to move during drag
         this.dragBendNodes = null;    // Map of "nodeId1-nodeId2" -> bendNodeId for temporary bends
         this.dragOriginalSegments = null; // Original segments before drag started
         
@@ -78,6 +79,7 @@ export class WireEditor {
     _setupEventHandlers() {
         // Store original handlers to chain them
         const originalOnMouseDown = this.viewport.onMouseDown;
+        const originalOnMouseMove = this.viewport.onMouseMove;
         const originalOnMouseUp = this.viewport.onMouseUp;
         const originalOnClick = this.viewport.onClick;
         
@@ -86,6 +88,13 @@ export class WireEditor {
                 this._onMouseDown(worldX, worldY, event);
             }
             originalOnMouseDown?.(worldX, worldY, event);
+        };
+        
+        this.viewport.onMouseMove = (worldX, worldY, event) => {
+            if (this.isActive) {
+                this._onMouseMove(worldX, worldY, event);
+            }
+            originalOnMouseMove?.(worldX, worldY, event);
         };
         
         this.viewport.onMouseUp = (worldX, worldY, event) => {
@@ -104,6 +113,7 @@ export class WireEditor {
     // ==================== Event Handlers ====================
     
     _onMouseDown(worldX, worldY, event) {
+        if (event?.__componentHandled) return;
         if (event.button !== 0) return; // Only left click
         if (event.shiftKey) return; // Shift+click is for panning
         
@@ -119,18 +129,22 @@ export class WireEditor {
             const hitSegment = this.wireGraph.getSegmentAt(snapped.x, snapped.y, this.segmentHitTolerance);
             
             if (hitNode) {
-                // Prepare for potential node drag
-                this.dragTarget = { type: 'node', id: hitNode.id };
-                this.dragStartWorld = { ...snapped };
-                this.dragStartPositions = new Map();
-                this.dragStartPositions.set(hitNode.id, { x: hitNode.x, y: hitNode.y });
-                this.dragBendNodes = new Map();
-                this.dragOriginalSegments = this._captureSegmentsForNode(hitNode.id);
+                if (!hitNode.isComponentPin) {
+                    // Prepare for potential node drag
+                    this.dragTarget = { type: 'node', id: hitNode.id };
+                    this.dragStartWorld = { ...snapped };
+                    this.dragStartPositions = new Map();
+                    this.dragStartPositions.set(hitNode.id, { x: hitNode.x, y: hitNode.y });
+                    this.dragMovedNodeIds = new Set([hitNode.id]);
+                    this.dragBendNodes = new Map();
+                    this.dragOriginalSegments = this._captureSegmentsForNode(hitNode.id);
+                }
             } else if (hitSegment) {
                 // Prepare for potential segment drag
                 this.dragTarget = { type: 'segment', id: hitSegment.segment.id };
                 this.dragStartWorld = { ...snapped };
                 this.dragStartPositions = new Map();
+                this.dragMovedNodeIds = new Set();
                 this.dragBendNodes = new Map();
                 
                 const seg = hitSegment.segment;
@@ -138,12 +152,15 @@ export class WireEditor {
                 const node2 = this.wireGraph.getNode(seg.nodeId2);
                 if (node1) this.dragStartPositions.set(node1.id, { x: node1.x, y: node1.y });
                 if (node2) this.dragStartPositions.set(node2.id, { x: node2.x, y: node2.y });
+                if (node1 && !node1.isComponentPin) this.dragMovedNodeIds.add(node1.id);
+                if (node2 && !node2.isComponentPin) this.dragMovedNodeIds.add(node2.id);
                 this.dragOriginalSegments = this._captureSegmentsForNodes([seg.nodeId1, seg.nodeId2]);
             }
         }
     }
     
     _onMouseMove(worldX, worldY, event) {
+        if (event?.__componentHandled) return;
         const snapped = this.viewport.snapToGrid(worldX, worldY);
         
         // Check for drag threshold
@@ -175,6 +192,7 @@ export class WireEditor {
     }
     
     _onMouseUp(worldX, worldY, event) {
+        if (event?.__componentHandled) return;
         if (event.button !== 0) return;
         
         const snapped = this.viewport.snapToGrid(worldX, worldY);
@@ -211,6 +229,7 @@ export class WireEditor {
         this.dragTarget = null;
         this.dragStartWorld = null;
         this.dragStartPositions = null;
+        this.dragMovedNodeIds = null;
         this.dragBendNodes = null;
         this.dragOriginalSegments = null;
     }
@@ -480,6 +499,7 @@ export class WireEditor {
     _dragNode(nodeId, dx, dy) {
         const originalPos = this.dragStartPositions.get(nodeId);
         if (!originalPos) return;
+        if (this.dragMovedNodeIds && !this.dragMovedNodeIds.has(nodeId)) return;
         
         const newX = this.viewport.snapToGrid(originalPos.x + dx, 0).x;
         const newY = this.viewport.snapToGrid(0, originalPos.y + dy).y;
@@ -491,6 +511,7 @@ export class WireEditor {
     _dragSegment(segmentId, dx, dy) {
         const segment = this.wireGraph.getSegment(segmentId);
         if (!segment) return;
+        if (this.dragMovedNodeIds && this.dragMovedNodeIds.size === 0) return;
         
         const pos1 = this.dragStartPositions.get(segment.nodeId1);
         const pos2 = this.dragStartPositions.get(segment.nodeId2);
@@ -504,14 +525,22 @@ export class WireEditor {
             // Move only in Y direction
             const newY = this.viewport.snapToGrid(0, pos1.y + dy).y;
             
-            this.wireGraph.updateNode(segment.nodeId1, pos1.x, newY);
-            this.wireGraph.updateNode(segment.nodeId2, pos2.x, newY);
+            if (!this.dragMovedNodeIds || this.dragMovedNodeIds.has(segment.nodeId1)) {
+                this.wireGraph.updateNode(segment.nodeId1, pos1.x, newY);
+            }
+            if (!this.dragMovedNodeIds || this.dragMovedNodeIds.has(segment.nodeId2)) {
+                this.wireGraph.updateNode(segment.nodeId2, pos2.x, newY);
+            }
         } else if (isVertical) {
             // Move only in X direction
             const newX = this.viewport.snapToGrid(pos1.x + dx, 0).x;
             
-            this.wireGraph.updateNode(segment.nodeId1, newX, pos1.y);
-            this.wireGraph.updateNode(segment.nodeId2, newX, pos2.y);
+            if (!this.dragMovedNodeIds || this.dragMovedNodeIds.has(segment.nodeId1)) {
+                this.wireGraph.updateNode(segment.nodeId1, newX, pos1.y);
+            }
+            if (!this.dragMovedNodeIds || this.dragMovedNodeIds.has(segment.nodeId2)) {
+                this.wireGraph.updateNode(segment.nodeId2, newX, pos2.y);
+            }
         }
     }
     
@@ -520,7 +549,7 @@ export class WireEditor {
      */
     _fixDiagonalsDuringDrag() {
         // Get all segments connected to the dragged nodes
-        const nodesToCheck = new Set(this.dragStartPositions.keys());
+        const nodesToCheck = new Set(this.dragMovedNodeIds ?? this.dragStartPositions.keys());
         const segmentsToFix = [];
         
         for (const nodeId of nodesToCheck) {
@@ -554,8 +583,8 @@ export class WireEditor {
             this.wireGraph.removeSegment(segment.nodeId1, segment.nodeId2);
             
             // Determine which node is being dragged
-            const node1Dragged = this.dragStartPositions.has(segment.nodeId1);
-            const node2Dragged = this.dragStartPositions.has(segment.nodeId2);
+            const node1Dragged = this.dragMovedNodeIds ? this.dragMovedNodeIds.has(segment.nodeId1) : this.dragStartPositions.has(segment.nodeId1);
+            const node2Dragged = this.dragMovedNodeIds ? this.dragMovedNodeIds.has(segment.nodeId2) : this.dragStartPositions.has(segment.nodeId2);
             
             // Choose bend point based on which node is being dragged
             // The bend should be at (draggedNode.x, staticNode.y) or (staticNode.x, draggedNode.y)
@@ -606,6 +635,7 @@ export class WireEditor {
         this.dragTarget = null;
         this.dragStartWorld = null;
         this.dragStartPositions = null;
+        this.dragMovedNodeIds = null;
         this.dragBendNodes = null;
         this.dragOriginalSegments = null;
         this._setStatus('Ready - Click to start drawing wire');
@@ -714,6 +744,7 @@ export class WireEditor {
         this.dragTarget = null;
         this.dragStartWorld = null;
         this.dragStartPositions = null;
+        this.dragMovedNodeIds = null;
         this.dragBendNodes = null;
         this.dragOriginalSegments = null;
         this._setStatus('Ready - Click to start drawing wire');
@@ -815,6 +846,14 @@ export class WireEditor {
         if (!active && this.mode === 'drawing') {
             this._finishDrawing();
         }
+    }
+    
+    /**
+     * Start drawing a wire from an existing node
+     * @param {number} nodeId - The node ID to start from
+     */
+    startDrawingFromNode(nodeId) {
+        this._startDrawingFromNode(nodeId);
     }
     
     /**

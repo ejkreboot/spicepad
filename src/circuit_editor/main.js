@@ -12,6 +12,7 @@ import '../style.css';
 import { CanvasViewport } from './CanvasViewport.js';
 import { WireGraph } from './WireGraph.js';
 import { WireEditor } from './WireEditor.js';
+import { ComponentManager } from './ComponentManager.js';
 
 class CircuitEditorApp {
     constructor() {
@@ -30,6 +31,9 @@ class CircuitEditorApp {
         this.wireGraph = new WireGraph();
         
         this.wireEditor = new WireEditor(this.viewport, this.wireGraph);
+        this.componentManager = new ComponentManager(this.viewport, this.wireGraph);
+        this._componentCounter = 1;
+        this._addComponentCopy({ x: 0, y: 0 });
         
         // Wire up UI elements
         this._setupUI();
@@ -55,11 +59,11 @@ class CircuitEditorApp {
         // Coordinate display
         const coordDisplay = document.getElementById('coord-display');
         if (coordDisplay) {
-            const originalOnMouseMove = this.wireEditor._onMouseMove.bind(this.wireEditor);
+            const originalOnMouseMove = this.viewport.onMouseMove;
             this.viewport.onMouseMove = (worldX, worldY, event) => {
                 const snapped = this.viewport.snapToGrid(worldX, worldY);
                 coordDisplay.textContent = `X: ${snapped.x} Y: ${snapped.y}`;
-                originalOnMouseMove(worldX, worldY, event);
+                originalOnMouseMove?.(worldX, worldY, event);
             };
         }
         
@@ -116,6 +120,13 @@ class CircuitEditorApp {
             
             // Global shortcuts
             switch (event.key.toLowerCase()) {
+                case 'c':
+                    if (!event.ctrlKey && !event.metaKey) {
+                        const mouse = this.viewport.getMouseWorld();
+                        const snapped = this.viewport.snapToGrid(mouse.x, mouse.y);
+                        this._addComponentCopy(snapped);
+                    }
+                    break;
                 case 'w':
                     if (!event.ctrlKey && !event.metaKey) {
                         this._setTool('wire');
@@ -134,6 +145,16 @@ class CircuitEditorApp {
                     }
                     break;
             }
+        });
+    }
+
+    _addComponentCopy(position) {
+        const id = `U${this._componentCounter++}`;
+        this.componentManager.addBasicSquare({
+            id,
+            x: position.x,
+            y: position.y,
+            size: 40
         });
     }
     
