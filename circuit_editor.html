@@ -11,91 +11,107 @@
 <body>
     <h1>Circuit Editor</h1>
 
-    <div class="container">
-        <div class="workspace-grid">
-            <div class="panel components-panel">
-                <h2>Components</h2>
-                <div class="component-list" id="componentList"></div>
+    <div class="app-layout">
+        <!-- Left sidebar: components -->
+        <aside class="sidebar">
+            <h2>Components</h2>
+            <div class="component-list" id="componentList"></div>
+        </aside>
+
+        <!-- Main workspace: canvas + results -->
+        <div class="main-workspace">
+            <div class="workspace-top">
+                <!-- Circuit editor -->
+                <div class="circuit-editor-container">
+                    <div class="circuit-toolbar">
+                        <button class="btn btn-secondary tool-btn" data-tool="select" title="Select Tool (S)">
+                            <span class="material-symbols-outlined">arrow_selector_tool</span>
+                            Select
+                        </button>
+                        <button class="btn btn-secondary tool-btn" data-tool="probe" title="Probe Tool (P)">
+                            <span class="material-symbols-outlined">sensors</span>
+                            Probe
+                        </button>
+                        <button class="btn btn-secondary tool-btn" data-tool="delete" title="Delete Tool (D)">
+                            <span class="material-symbols-outlined">delete_forever</span>
+                            Delete
+                        </button>
+                        <div class="separator"></div>
+                        <button class="btn btn-primary" id="netlist-btn" title="View Netlist">
+                            <span class="material-symbols-outlined">code</span>
+                            Netlist
+                        </button>
+                        <button class="btn btn-secondary" id="simulation-btn" title="Simulation Settings">
+                            <span class="material-symbols-outlined">trending_up</span>
+                            Simulation
+                        </button>
+                        <div class="separator"></div>
+                        <button class="btn btn-secondary" id="save-btn" title="Save Circuit">
+                            <span class="material-symbols-outlined">save</span>
+                            Save
+                        </button>
+                        <button class="btn btn-secondary" id="load-btn" title="Load Circuit">
+                            <span class="material-symbols-outlined">folder_open</span>
+                            Load
+                        </button>
+                        <div class="separator"></div>
+                        <button class="btn btn-secondary" id="clear-btn" title="Clear All">
+                            <span class="material-symbols-outlined">delete</span>
+                            Clear
+                        </button>
+                        <div class="separator"></div>
+                        <span class="zoom-indicator" id="zoom-indicator">100%</span>
+                    </div>
+                
+                    <div class="circuit-canvas-wrapper">
+                        <canvas id="circuit-canvas"></canvas>
+                        <div class="canvas-info">
+                            <span id="coord-display">X: 0 Y: 0</span>
+                            <span id="grid-display">Grid: 10</span>
+                        </div>
+                        <div class="simulation-badge" id="simulation-badge" title="Click to configure simulation">
+                            <span class="material-symbols-outlined">science</span>
+                            <span id="simulation-badge-text">No Sim</span>
+                        </div>
+                    </div>
+                
+                    <div class="circuit-status-bar">
+                        <span id="status-message">Ready</span>
+                    </div>
+                </div>
+
+                <!-- Results panel (plots) -->
+                <div class="results-panel" id="results-panel">
+                    <div class="results-header">
+                        <h3>Results</h3>
+                        <button class="btn btn-secondary btn-small" id="sim-run-btn" title="Run Simulation (⌘↵)">
+                            <span class="material-symbols-outlined">play_arrow</span>
+                            Run
+                        </button>
+                    </div>
+                    <div class="results-status">
+                        <span id="sim-status" class="runner-status run-ready">Ready</span>
+                    </div>
+                    <div class="results-plots" id="results-plots">
+                        <div class="plot-placeholder">
+                            <span class="material-symbols-outlined">show_chart</span>
+                            <span>Run a simulation to see results</span>
+                        </div>
+                    </div>
+                </div>
             </div>
 
-            <div class="circuit-editor-container">
-                <div class="circuit-toolbar">
-                    <button class="btn btn-secondary tool-btn" data-tool="select" title="Select Tool (S)">
-                        <span class="material-symbols-outlined">arrow_selector_tool</span>
-                        Select
+            <!-- Console footer -->
+            <div class="console-panel collapsed" id="console-panel">
+                <div class="console-header">
+                    <button class="console-toggle" id="console-toggle" title="Toggle console">
+                        <span class="material-symbols-outlined">terminal</span>
+                        <span>Console</span>
+                        <span class="material-symbols-outlined toggle-icon">expand_less</span>
                     </button>
-                    <button class="btn btn-secondary tool-btn" data-tool="probe" title="Probe Tool (P)">
-                        <span class="material-symbols-outlined">sensors</span>
-                        Probe
-                    </button>
-                    <button class="btn btn-secondary tool-btn" data-tool="delete" title="Delete Tool (D)">
-                        <span class="material-symbols-outlined">delete_forever</span>
-                        Delete
-                    </button>
-                    <div class="separator"></div>
-                    <button class="btn btn-primary" id="netlist-btn" title="View Netlist">
-                        <span class="material-symbols-outlined">code</span>
-                        Netlist
-                    </button>
-                    <button class="btn btn-secondary" id="simulation-btn" title="Simulation Settings">
-                        <span class="material-symbols-outlined">trending_up</span>
-                        Simulation
-                    </button>
-                    <div class="separator"></div>
-                    <button class="btn btn-secondary" id="save-btn" title="Save Circuit">
-                        <span class="material-symbols-outlined">save</span>
-                        Save
-                    </button>
-                    <button class="btn btn-secondary" id="load-btn" title="Load Circuit">
-                        <span class="material-symbols-outlined">folder_open</span>
-                        Load
-                    </button>
-                    <div class="separator"></div>
-                    <button class="btn btn-secondary" id="clear-btn" title="Clear All">
-                        <span class="material-symbols-outlined">delete</span>
-                        Clear
-                    </button>
-                    <div class="separator"></div>
-                    <span class="zoom-indicator" id="zoom-indicator">100%</span>
                 </div>
-                
-                <div class="circuit-canvas-wrapper">
-                    <canvas id="circuit-canvas"></canvas>
-                    <div class="canvas-info">
-                        <span id="coord-display">X: 0 Y: 0</span>
-                        <span id="grid-display">Grid: 10</span>
-                    </div>
-                    <div class="simulation-badge" id="simulation-badge" title="Click to configure simulation">
-                        <span class="material-symbols-outlined">science</span>
-                        <span id="simulation-badge-text">No Sim</span>
-                    </div>
-                </div>
-                
-                <div class="circuit-status-bar">
-                    <span id="status-message">Ready</span>
-                </div>
+                <pre id="sim-log" class="console-output">Click Run to simulate the current circuit.</pre>
             </div>
-        </div>
-    </div>
-
-    <div class="panel sim-runner-panel">
-        <div class="sim-runner-header">
-            <div>
-                <h2 style="margin: 0;">Ngspice Runner</h2>
-                <p class="sim-runner-subtitle">Send the generated netlist to the bundled ngspice WASM worker and stream the output below.</p>
-            </div>
-            <button class="btn btn-primary" id="sim-run-btn" title="Run ngspice">
-                <span class="material-symbols-outlined">play_arrow</span>
-                Run
-            </button>
-        </div>
-        <div class="sim-runner-status-row">
-            <span id="sim-status" class="runner-status run-ready">Ready</span>
-        </div>
-        <pre id="sim-log" class="sim-log">Click Run to simulate the current circuit.</pre>
-        <div class="sim-plot-wrapper">
-            <h3 class="sim-plot-title">Plot</h3>
-            <div id="sim-plot" class="sim-plot">No data yet</div>
         </div>
     </div>
 

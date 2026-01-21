@@ -304,6 +304,14 @@ class CircuitEditorApp {
                 this.viewport.render();
                 return;
             }
+            
+            // Cmd/Ctrl + Enter to run simulation
+            if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+                event.preventDefault();
+                this._runNgspiceSimulation();
+                return;
+            }
+            
             // Let wire editor handle first
             if (this.wireEditor.handleKeyDown(event)) {
                 this.viewport.render();
@@ -1087,14 +1095,23 @@ class CircuitEditorApp {
         this.spiceRunBtn = document.getElementById('sim-run-btn');
         this.spiceStatusEl = document.getElementById('sim-status');
         this.spiceOutputEl = document.getElementById('sim-log');
-        this.spicePlotEl = document.getElementById('sim-plot');
+        this.spicePlotsEl = document.getElementById('results-plots');
+        
+        // Console toggle
+        const consoleToggle = document.getElementById('console-toggle');
+        const consolePanel = document.getElementById('console-panel');
+        if (consoleToggle && consolePanel) {
+            consoleToggle.addEventListener('click', () => {
+                consolePanel.classList.toggle('collapsed');
+            });
+        }
 
         if (this.spiceRunBtn) {
             this.spiceRunBtn.addEventListener('click', () => this._runNgspiceSimulation());
         }
 
         // Show initial status
-        this._setRunStatus('ready', 'Ready to simulate');
+        this._setRunStatus('ready', 'Ready');
 
         this._loadSpinitFile();
     }
@@ -1190,6 +1207,7 @@ class CircuitEditorApp {
                     this.spiceRunBtn.disabled = false;
                     this._appendRunOutput(`[error] ${message}`);
                     if (stack) this._appendRunOutput(stack);
+                    this._showErrorPlaceholder(message);
                     worker.terminate();
                     this.spiceWorker = null;
                     break;
@@ -1202,6 +1220,7 @@ class CircuitEditorApp {
             this._setRunStatus('error', 'Worker error');
             this.spiceRunBtn.disabled = false;
             this._appendRunOutput(`[worker] ${err.message}`);
+            this._showErrorPlaceholder(err.message);
             worker.terminate();
             this.spiceWorker = null;
         };
@@ -1232,11 +1251,93 @@ class CircuitEditorApp {
     }
 
     _clearPlot() {
-        if (!this.spicePlotEl) return;
-        if (window.Plotly) {
-            try { window.Plotly.purge(this.spicePlotEl); } catch (_) {}
-        }
-        this.spicePlotEl.innerHTML = '<div style="color: #94a3b8; font-size: 12px;">No data yet</div>';
+        if (!this.spicePlotsEl) return;
+        // Clear all existing plot containers
+        this.spicePlotsEl.querySelectorAll('.plot-container').forEach(container => {
+            const plotArea = container.querySelector('.plot-area');
+            if (plotArea && window.Plotly) {
+                try { window.Plotly.purge(plotArea); } catch (_) {}
+            }
+        });
+        this.spicePlotsEl.innerHTML = `
+            <div class="plot-placeholder running">
+                <span class="material-symbols-outlined">autorenew</span>
+                <span>Running simulation...</span>
+            </div>
+        `;
+    }
+    
+    /**
+     * Show the default placeholder in results panel
+     */
+    _showPlotPlaceholder() {
+        if (!this.spicePlotsEl) return;
+        this.spicePlotsEl.innerHTML = `
+            <div class="plot-placeholder">
+                <span class="material-symbols-outlined">show_chart</span>
+                <span>Add probes to your circuit and run<br/>a simulation to see results here</span>
+            </div>
+        `;
+    }
+    
+    /**
+     * Show error placeholder in results panel
+     */
+    _showErrorPlaceholder(message) {
+        if (!this.spicePlotsEl) return;
+        this.spicePlotsEl.innerHTML = `
+            <div class="plot-placeholder error">
+                <span class="material-symbols-outlined">error_outline</span>
+                <span>Simulation failed<br/><small>Check the console for details</small></span>
+            </div>
+        `;
+        // Expand console to show error details
+        const consolePanel = document.getElementById('console-panel');
+        if (consolePanel) consolePanel.classList.remove('collapsed');
+    }
+    
+    /**
+     * Create a new plot container for a specific analysis
+     * @param {string} analysisType - Type of analysis for the title
+     * @param {string} id - Unique ID for this plot
+     * @returns {HTMLElement} The plot area element to render into
+     */
+    _createPlotContainer(analysisType, id) {
+        if (!this.spicePlotsEl) return null;
+        
+        // Remove placeholder if present
+        const placeholder = this.spicePlotsEl.querySelector('.plot-placeholder');
+        if (placeholder) placeholder.remove();
+        
+        const container = document.createElement('div');
+        container.className = 'plot-container';
+        container.id = `plot-${id}`;
+        
+        const titleText = {
+            'ac': 'AC Analysis (Frequency Response)',
+            'tran': 'Transient Analysis',
+            'dc': 'DC Sweep',
+            'op': 'Operating Point'
+        }[analysisType] || 'Simulation Results';
+        
+        // Add scale toggle for AC analysis
+        const scaleToggle = analysisType === 'ac' ? `
+            <div class="plot-scale-toggle">
+                <button class="scale-btn active" data-scale="db">dB</button>
+                <button class="scale-btn" data-scale="v">V</button>
+            </div>
+        ` : '';
+        
+        container.innerHTML = `
+            <div class="plot-header">
+                <div class="plot-title">${titleText}</div>
+                ${scaleToggle}
+            </div>
+            <div class="plot-area" id="plot-area-${id}"></div>
+        `;
+        
+        this.spicePlotsEl.appendChild(container);
+        return container.querySelector('.plot-area');
     }
 
     _tryParsePrintOutput(stdout) {
@@ -1258,7 +1359,11 @@ class CircuitEditorApp {
      * @param {string} analysisType - Type of analysis ('ac', 'tran', 'dc', 'op')
      */
     _plotResults(data, probeInfo = [], analysisType = 'tran') {
-        if (!this.spicePlotEl) return;
+        console.log('[_plotResults] Called with analysisType:', analysisType);
+        console.log('[_plotResults] spicePlotsEl:', this.spicePlotsEl);
+        console.log('[_plotResults] data length:', data?.length);
+        
+        if (!this.spicePlotsEl) return;
         if (!data || !data.trim()) return;
         if (!window.Plotly) {
             this._appendRunOutput('[note] Plotly not loaded; cannot plot results');
@@ -1272,24 +1377,35 @@ class CircuitEditorApp {
             return true;
         });
 
+        console.log('[_plotResults] filtered lines count:', lines.length);
+        console.log('[_plotResults] first few lines:', lines.slice(0, 3));
+
         if (lines.length === 0) {
             this._appendRunOutput('[note] No plottable data found');
             return;
         }
 
+        // Create a plot container for this analysis
+        const plotArea = this._createPlotContainer(analysisType, Date.now());
+        console.log('[_plotResults] created plotArea:', plotArea);
+        if (!plotArea) return;
+
         // Parse based on analysis type
         if (analysisType === 'ac') {
-            this._plotAcResults(lines, probeInfo);
+            this._plotAcResults(lines, probeInfo, plotArea);
         } else {
-            this._plotTimeDomainResults(lines, probeInfo, analysisType);
+            this._plotTimeDomainResults(lines, probeInfo, analysisType, plotArea);
         }
     }
 
     /**
      * Plot AC analysis results (frequency domain with complex numbers)
      * wrdata format for AC: freq v(1)_real v(1)_imag freq v(2)_real v(2)_imag ...
+     * @param {Array<string>} lines - Data lines
+     * @param {Array} probeInfo - Probe metadata
+     * @param {HTMLElement} plotArea - The element to render the plot into
      */
-    _plotAcResults(lines, probeInfo) {
+    _plotAcResults(lines, probeInfo, plotArea) {
         const colsPerSignal = 3; // freq, real, imag
         
         // Infer number of signals from data columns (more reliable than probeInfo.length)
@@ -1358,47 +1474,97 @@ class CircuitEditorApp {
 
         const colors = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'];
         
-        // Create magnitude traces using probe colors
+        // Store signal data on the plot container for scale toggling
+        const plotContainer = plotArea.closest('.plot-container');
+        plotContainer._acSignalData = validSignals;
+        plotContainer._acProbeColors = colors;
+        
+        // Setup scale toggle buttons
+        const scaleButtons = plotContainer.querySelectorAll('.scale-btn');
+        scaleButtons.forEach(btn => {
+            btn.addEventListener('click', () => {
+                scaleButtons.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                this._renderAcPlot(plotArea, plotContainer._acSignalData, plotContainer._acProbeColors, btn.dataset.scale);
+            });
+        });
+        
+        // Initial render in dB
+        this._renderAcPlot(plotArea, validSignals, colors, 'db');
+    }
+    
+    /**
+     * Render AC plot with specified scale (dB or V)
+     */
+    _renderAcPlot(plotArea, validSignals, colors, scale) {
+        const isDb = scale === 'db';
+        
         const traces = validSignals.map((sig, i) => ({
             x: sig.freq,
-            y: sig.magnitude.map(m => 20 * Math.log10(Math.max(m, 1e-12))), // dB scale
+            y: isDb 
+                ? sig.magnitude.map(m => 20 * Math.log10(Math.max(m, 1e-12)))
+                : sig.magnitude,
             type: 'scatter',
             mode: 'lines',
-            name: `${sig.label} (dB)`,
+            name: `${sig.label} (${isDb ? 'dB' : 'V'})`,
             line: { color: sig.color || colors[i % colors.length], width: 2 }
         }));
 
         const layout = {
             paper_bgcolor: '#0d1b2a',
             plot_bgcolor: '#0d1b2a',
-            font: { color: '#e2e8f0' },
+            font: { color: '#e2e8f0', size: 10 },
             xaxis: {
-                title: 'Frequency (Hz)',
+                title: { text: 'Frequency (Hz)', font: { size: 11 } },
                 type: 'log',
-                gridcolor: '#1f2937',
-                zerolinecolor: '#1f2937'
+                gridcolor: '#334155',
+                zerolinecolor: '#334155',
+                linecolor: '#475569',
+                linewidth: 1,
+                mirror: true,
+                tickfont: { size: 9 }
             },
             yaxis: {
-                title: 'Magnitude (dB)',
-                gridcolor: '#1f2937',
-                zerolinecolor: '#1f2937'
+                title: { text: isDb ? 'Magnitude (dB)' : 'Magnitude (V)', font: { size: 11 } },
+                gridcolor: '#334155',
+                zerolinecolor: '#334155',
+                linecolor: '#475569',
+                linewidth: 1,
+                mirror: true,
+                tickfont: { size: 9 }
             },
-            margin: { t: 30, r: 20, b: 50, l: 55 },
+            margin: { t: 20, r: 20, b: 45, l: 50 },
             legend: {
                 x: 1,
                 xanchor: 'right',
                 y: 1,
-                bgcolor: 'rgba(13, 27, 42, 0.85)'
+                bgcolor: 'rgba(15, 23, 42, 0.85)',
+                font: { size: 10 }
             }
         };
-
-        window.Plotly.newPlot(this.spicePlotEl, traces, layout, { responsive: true });
+        
+        // Use requestAnimationFrame to ensure DOM is ready and get actual dimensions
+        requestAnimationFrame(() => {
+            const rect = plotArea.getBoundingClientRect();
+            layout.width = rect.width || 340;
+            layout.height = rect.height || 260;
+            
+            try {
+                window.Plotly.newPlot(plotArea, traces, layout, { responsive: true });
+            } catch (err) {
+                console.error('[AC Plot] Plotly.newPlot error:', err);
+            }
+        });
     }
 
     /**
      * Plot time-domain results (transient, DC sweep)
+     * @param {Array<string>} lines - Data lines
+     * @param {Array} probeInfo - Probe metadata
+     * @param {string} analysisType - Type of analysis
+     * @param {HTMLElement} plotArea - The element to render the plot into
      */
-    _plotTimeDomainResults(lines, probeInfo, analysisType) {
+    _plotTimeDomainResults(lines, probeInfo, analysisType, plotArea) {
         const xValues = [];
         const signals = {};
         const signalColors = {};
@@ -1446,27 +1612,42 @@ class CircuitEditorApp {
         const layout = {
             paper_bgcolor: '#0d1b2a',
             plot_bgcolor: '#0d1b2a',
-            font: { color: '#e2e8f0' },
+            font: { color: '#e2e8f0', size: 10 },
             xaxis: {
-                title: xAxisTitle,
-                gridcolor: '#1f2937',
-                zerolinecolor: '#1f2937'
+                title: { text: xAxisTitle, font: { size: 11 } },
+                gridcolor: '#334155',
+                zerolinecolor: '#334155',
+                linecolor: '#475569',
+                linewidth: 1,
+                mirror: true,
+                tickfont: { size: 9 }
             },
             yaxis: {
-                title: 'Voltage (V)',
-                gridcolor: '#1f2937',
-                zerolinecolor: '#1f2937'
+                title: { text: 'Voltage (V)', font: { size: 11 } },
+                gridcolor: '#334155',
+                zerolinecolor: '#334155',
+                linecolor: '#475569',
+                linewidth: 1,
+                mirror: true,
+                tickfont: { size: 9 }
             },
-            margin: { t: 30, r: 20, b: 50, l: 55 },
+            margin: { t: 20, r: 20, b: 45, l: 50 },
             legend: {
                 x: 1,
                 xanchor: 'right',
                 y: 1,
-                bgcolor: 'rgba(13, 27, 42, 0.85)'
+                bgcolor: 'rgba(15, 23, 42, 0.85)',
+                font: { size: 10 }
             }
         };
 
-        window.Plotly.newPlot(this.spicePlotEl, traces, layout, { responsive: true });
+        // Use requestAnimationFrame to ensure DOM is ready and get actual dimensions
+        requestAnimationFrame(() => {
+            const rect = plotArea.getBoundingClientRect();
+            layout.width = rect.width || 340;
+            layout.height = rect.height || 260;
+            window.Plotly.newPlot(plotArea, traces, layout, { responsive: true });
+        });
     }
     
     // ==================== Save/Load ====================
