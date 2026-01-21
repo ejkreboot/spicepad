@@ -15,6 +15,8 @@ export class ComponentManager {
         
 		this.components = [];
 		this.pinNodeIdsByComponent = new Map(); // componentId -> Map(pinId -> nodeId)
+		this.svgCache = new Map(); // definitionId -> svg render data
+		this.selectedComponentIds = new Set();
         
 		// Dragging state
 		this.isDragging = false;
@@ -29,6 +31,10 @@ export class ComponentManager {
 		this.pinRadius = 3.5;
 		this.hitPadding = 2;
 		this.pinHitTolerance = 6;
+		this.ghostFill = '#e2e8f0';
+		this.ghostStroke = '#94a3b8';
+		this.ghostPin = '#64748b';
+		this.ghostOpacity = 0.45;
         
 		this._setupEventHandlers();
 		this._setupRendering();
@@ -54,6 +60,33 @@ export class ComponentManager {
 		const component = createBasicSquareComponent(options);
 		this.addComponent(component);
 		return component;
+	}
+
+	/**
+	 * Render a translucent preview of a component at the given position.
+	 * @param {CanvasRenderingContext2D} ctx
+	 * @param {import('./CanvasViewport.js').CanvasViewport} viewport
+	 * @param {import('./Component.js').Component} component
+	 */
+	renderGhostComponent(ctx, viewport, component) {
+		if (!component) return;
+		ctx.save();
+		ctx.globalAlpha = this.ghostOpacity;
+
+		const svgEntry = this._getSvgEntry(component);
+		if (svgEntry?.ready) {
+			this._renderSvgComponent(ctx, viewport, component, svgEntry);
+		} else {
+			const bounds = component.getBounds();
+			viewport.drawRect(bounds.x, bounds.y, bounds.width, bounds.height, this.ghostFill, this.ghostStroke, 1.5);
+		}
+
+		for (const pin of component.pins) {
+			const pos = component.getPinWorldPosition(pin);
+			viewport.drawCircle(pos.x, pos.y, this.pinRadius / viewport.zoom, this.ghostPin, null, 0);
+		}
+
+		ctx.restore();
 	}
     
 	// ==================== Event Handling ====================
@@ -86,6 +119,7 @@ export class ComponentManager {
 	}
     
 	_onMouseDown(worldX, worldY, event) {
+		if (event?.__selectionHandled) return false;
 		if (event.button !== 0) return false;
 		if (event.shiftKey) return false;
         
@@ -105,6 +139,7 @@ export class ComponentManager {
 	}
     
 	_onMouseMove(worldX, worldY, event) {
+		if (event?.__selectionHandled) return false;
 		if (!this.isDragging || !this.dragComponent) return false;
 		const snapped = this.viewport.snapToGrid(worldX, worldY);
         
@@ -120,6 +155,7 @@ export class ComponentManager {
 	}
     
 	_onMouseUp(worldX, worldY, event) {
+		if (event?.__selectionHandled) return false;
 		if (!this.isDragging) return false;
         
 		this.isDragging = false;
@@ -145,13 +181,166 @@ export class ComponentManager {
     
 	_renderComponents(ctx, viewport) {
 		for (const component of this.components) {
-			viewport.drawRect(component.x, component.y, component.width, component.height, this.bodyFill, this.bodyStroke, 2);
+			const isSelected = this.selectedComponentIds.has(component.id);
+			if (isSelected) {
+				const bounds = component.getBounds();
+				const pad = 4 / viewport.zoom;
+				viewport.drawRect(
+					bounds.x - pad,
+					bounds.y - pad,
+					bounds.width + pad * 2,
+					bounds.height + pad * 2,
+					'rgba(59, 130, 246, 0.08)',
+					'#2563eb',
+					2
+				);
+			}
+
+			const svgEntry = this._getSvgEntry(component);
+			if (svgEntry?.ready) {
+				this._renderSvgComponent(ctx, viewport, component, svgEntry);
+			} else {
+				const bounds = component.getBounds();
+				viewport.drawRect(bounds.x, bounds.y, bounds.width, bounds.height, this.bodyFill, this.bodyStroke, 2);
+			}
             
 			for (const pin of component.pins) {
 				const pos = component.getPinWorldPosition(pin);
 				viewport.drawCircle(pos.x, pos.y, this.pinRadius / viewport.zoom, this.pinFill, null, 0);
 			}
+
+			this._renderComponentLabels(ctx, viewport, component);
 		}
+	}
+
+	_getSvgEntry(component) {
+		const definitionId = component.meta?.definitionId;
+		const svg = component.meta?.svg;
+		if (!definitionId || !svg) return null;
+		if (this.svgCache.has(definitionId)) return this.svgCache.get(definitionId);
+
+		const parser = new DOMParser();
+		const doc = parser.parseFromString(svg, 'image/svg+xml');
+		const svgEl = doc.querySelector('svg');
+		if (!svgEl) return null;
+
+		const viewBox = (svgEl.getAttribute('viewBox') || '').split(/\s+/).map(Number);
+		const viewBoxWidth = Number.isFinite(viewBox[2]) ? viewBox[2] : (parseFloat(svgEl.getAttribute('width')) || 0);
+		const viewBoxHeight = Number.isFinite(viewBox[3]) ? viewBox[3] : (parseFloat(svgEl.getAttribute('height')) || 0);
+		const compWidth = parseFloat(svgEl.getAttribute('data-comp-width')) || component.width;
+		const compHeight = parseFloat(svgEl.getAttribute('data-comp-height')) || component.height;
+		const offsetX = parseFloat(svgEl.getAttribute('data-offset-x')) || 0;
+		const offsetY = parseFloat(svgEl.getAttribute('data-offset-y')) || 0;
+
+		const entry = {
+			image: new Image(),
+			viewBoxWidth,
+			viewBoxHeight,
+			compWidth,
+			compHeight,
+			offsetX,
+			offsetY,
+			ready: false
+		};
+
+		const blob = new Blob([svg], { type: 'image/svg+xml' });
+		const url = URL.createObjectURL(blob);
+		entry.image.onload = () => {
+			entry.ready = true;
+			URL.revokeObjectURL(url);
+			this.viewport.render();
+		};
+		entry.image.onerror = () => {
+			URL.revokeObjectURL(url);
+		};
+		entry.image.src = url;
+
+		this.svgCache.set(definitionId, entry);
+		return entry;
+	}
+
+	_renderSvgComponent(ctx, viewport, component, svgEntry) {
+		const rotation = component.rotation || 0;
+		const origDims = component.getOriginalDimensions ? component.getOriginalDimensions() : { width: component.width, height: component.height };
+		
+		// Use original dimensions for scale calculation
+		const scaleX = origDims.width / svgEntry.compWidth;
+		const scaleY = origDims.height / svgEntry.compHeight;
+		const drawWidth = svgEntry.viewBoxWidth * scaleX;
+		const drawHeight = svgEntry.viewBoxHeight * scaleY;
+		const drawX = component.x - svgEntry.offsetX * scaleX;
+		const drawY = component.y - svgEntry.offsetY * scaleY;
+
+		const screen = viewport.worldToScreen(drawX, drawY);
+		
+		// Apply rotation if needed
+		if (rotation !== 0) {
+			ctx.save();
+			// Calculate center of the component's bounding box in screen coordinates
+			const centerX = screen.x + (drawWidth * viewport.zoom) / 2;
+			const centerY = screen.y + (drawHeight * viewport.zoom) / 2;
+			ctx.translate(centerX, centerY);
+			ctx.rotate((rotation * Math.PI) / 180);
+			ctx.translate(-centerX, -centerY);
+		}
+		
+		ctx.drawImage(
+			svgEntry.image,
+			screen.x,
+			screen.y,
+			drawWidth * viewport.zoom,
+			drawHeight * viewport.zoom
+		);
+		
+		if (rotation !== 0) {
+			ctx.restore();
+		}
+	}
+
+	_renderComponentLabels(ctx, viewport, component) {
+		const labels = component.meta?.labels;
+		const designatorText = component.meta?.designatorText ?? '';
+		const valueText = component.meta?.valueText;
+		if (!labels) return;
+
+		viewport.beginWorldPath();
+		ctx.fillStyle = '#111111';
+		ctx.font = '8px -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif';
+		ctx.textAlign = 'center';
+		ctx.textBaseline = 'middle';
+
+		// Use rotation-aware label index: 0 for 0°/180°, 1 for 90°/270°
+		const labelIndex = component.getLabelIndex ? component.getLabelIndex() : 0;
+		const designatorPos = labels.designator?.[labelIndex];
+		if (designatorPos && designatorText) {
+			ctx.fillText(designatorText, component.x + designatorPos.x, component.y + designatorPos.y);
+		}
+
+		const valuePos = labels.value?.[labelIndex];
+		if (valuePos && valueText !== null && valueText !== undefined && valueText !== '') {
+			ctx.fillText(String(valueText), component.x + valuePos.x, component.y + valuePos.y);
+		}
+
+		viewport.endWorldPath();
+	}
+
+	_renderPinLabel(ctx, viewport, component, pin, pinPos) {
+		if (!pin.labelOffset) return;
+		viewport.beginWorldPath();
+		ctx.fillStyle = '#111111';
+		ctx.font = '6px -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif';
+		const labelX = component.x + pin.labelOffset.x;
+		const labelY = component.y + pin.labelOffset.y;
+		if (pin.labelOffset.x < pin.offset.x) {
+			ctx.textAlign = 'right';
+		} else if (pin.labelOffset.x > pin.offset.x) {
+			ctx.textAlign = 'left';
+		} else {
+			ctx.textAlign = 'center';
+		}
+		ctx.textBaseline = 'middle';
+		ctx.fillText(pin.name ?? '', labelX, labelY);
+		viewport.endWorldPath();
 	}
     
 	// ==================== Pin Registration ====================
@@ -306,5 +495,66 @@ export class ComponentManager {
 			}
 		}
 		return null;
+	}
+
+	getComponentAt(worldX, worldY) {
+		return this._getComponentAt(worldX, worldY);
+	}
+
+	setSelectedComponents(componentIds) {
+		this.selectedComponentIds = componentIds ? new Set(componentIds) : new Set();
+		this.viewport.render();
+	}
+
+	syncComponentPins(component) {
+		this._syncComponentPins(component);
+	}
+
+	// ==================== Serialization ====================
+
+	/**
+	 * Serialize all components to JSON
+	 * @returns {Array}
+	 */
+	toJSON() {
+		return this.components.map(component => ({
+			id: component.id,
+			name: component.name,
+			x: component.x,
+			y: component.y,
+			width: component.width,
+			height: component.height,
+			rotation: component.rotation,
+			pins: component.pins,
+			meta: component.meta
+		}));
+	}
+
+	/**
+	 * Load components from JSON
+	 * @param {Array} data
+	 * @param {Function} ComponentClass - The Component class constructor
+	 */
+	fromJSON(data, ComponentClass) {
+		// Clear existing components
+		this.components = [];
+		this.pinNodeIdsByComponent.clear();
+
+		// Recreate components
+		for (const compData of data) {
+			const component = new ComponentClass({
+				id: compData.id,
+				name: compData.name,
+				x: compData.x,
+				y: compData.y,
+				width: compData.width,
+				height: compData.height,
+				pins: compData.pins,
+				meta: compData.meta,
+				rotation: compData.rotation
+			});
+			this.components.push(component);
+			this._registerComponentPins(component);
+		}
 	}
 }

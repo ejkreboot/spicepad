@@ -265,7 +265,7 @@ import { deleteSymbol as deleteSymbolFromStore, loadLibrary, replaceLibrary, sav
                 },
                 capacitor: {
                     name: 'Capacitor',
-                    description: 'Parallel-plate capacitor symbol',
+                    description: '',
                     defaultValue: '1uF',
                     designator: { prefix: 'C', autoIncrement: true },
                     size: { width: 60, height: 40 },
@@ -281,7 +281,7 @@ import { deleteSymbol as deleteSymbolFromStore, loadLibrary, replaceLibrary, sav
                 },
                 ground: {
                     name: 'Ground',
-                    description: 'Reference ground symbol',
+                    description: '',
                     defaultValue: null,
                     designator: { prefix: 'GND', autoIncrement: false },
                     size: { width: 60, height: 50 },

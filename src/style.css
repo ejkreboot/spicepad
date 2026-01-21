@@ -1,6 +1,17 @@
 /* Shared calculator styles */
 * { box-sizing: border-box; }
 
+/* Global placeholder styling */
+::placeholder {
+    color: #cbd5e1;
+    opacity: 1;
+}
+
+input::placeholder,
+textarea::placeholder {
+    color: #cbd5e1;
+}
+
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif;
     margin: 0;
@@ -8,6 +19,8 @@ body {
     background: #fff;
     color: #222;
     min-height: 100vh;
+    display: flex;
+    flex-direction: column;
 }
 
 h1 {
@@ -17,6 +30,7 @@ h1 {
     font-weight: 600;
     letter-spacing: -0.3px;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif;
+
 }
 
 /* Layout */
@@ -27,20 +41,27 @@ h1 {
     max-width: 1600px;
     margin: 0 auto;
     align-items: stretch;
+    flex: 1;
+    min-height: 0;
 }
 
 .workspace-grid {
     display: grid;
     grid-template-columns: 240px minmax(500px, 1fr);
+    grid-template-rows: minmax(0, 1fr);
     gap: 20px;
-    align-content: start;
+    align-items: stretch;
+    min-width: 0;
+    height: 100%;
 }
 
 .components-panel {
     grid-column: 1;
     grid-row: 1;
-    min-height: 600px;
-    max-height: 600px;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
 }
 
 .canvas-panel {
@@ -72,8 +93,9 @@ h1 {
     display: flex;
     flex-direction: column;
     gap: 5px;
-    max-height: 400px;
     overflow-y: auto;
+    flex: 1;
+    min-height: 0;
 }
 
 .component-item {
@@ -113,6 +135,43 @@ h1 {
 }
 
 .component-item svg polygon { fill: #333 !important; }
+
+.component-thumb {
+    width: 48px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.component-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.component-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: #111;
+}
+
+.component-desc {
+    font-size: 11px;
+    color: #666;
+}
+
+.component-item.tool-item .material-symbols-outlined {
+    font-size: 22px;
+    color: #333;
+}
+
+.component-item.tool-item .component-thumb {
+    background: #f8fafc;
+    border: 1px dashed #e2e8f0;
+    border-radius: 6px;
+}
 
 .component-item.draft {
     border: 1px dashed #999;
@@ -191,6 +250,27 @@ h1 {
 .btn-secondary:hover {
     background: #fafafa;
     border-color: #d4d4d4;
+}
+
+.tool-btn.active {
+    background: #3b82f6;
+    color: #fff;
+    border-color: #3b82f6;
+}
+
+.tool-btn.active:hover {
+    background: #2563eb;
+    border-color: #2563eb;
+}
+
+.component-item.tool-item.active {
+    background: #f0fdf4;
+    border: 2px solid #10b981;
+    color: inherit;
+}
+
+.component-item.tool-item.active .material-symbols-outlined {
+    color: #10b981;
 }
 
 .btn-danger {
@@ -538,6 +618,170 @@ canvas {
     letter-spacing: 1px;
 }
 
+/* ==================== Modal ==================== */
+
+.modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.45);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: 24px;
+}
+
+.modal-overlay.is-open {
+    display: flex;
+}
+
+.modal {
+    background: #fff;
+    border-radius: 10px;
+    padding: 20px;
+    width: min(420px, 92vw);
+    box-shadow: 0 20px 60px rgba(15, 23, 42, 0.25);
+    border: 1px solid #e5e5e5;
+}
+
+.modal-large {
+    width: min(720px, 92vw);
+}
+
+.modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+}
+
+.modal-header h3 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: #111;
+}
+
+.modal-body {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.modal-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.modal-field label {
+    font-size: 12px;
+    color: #475569;
+}
+
+.modal-field input {
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: 1px solid #e5e5e5;
+    font-size: 13px;
+}
+
+.modal-field input:disabled {
+    background: #f8fafc;
+    color: #94a3b8;
+}
+
+.modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 18px;
+}
+
+/* Ngspice runner */
+.sim-runner-panel {
+    max-width: 1200px;
+    margin: 16px auto 0;
+}
+
+.sim-runner-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.sim-runner-subtitle {
+    margin: 4px 0 0 0;
+    color: #475569;
+    font-size: 13px;
+}
+
+.sim-runner-status-row {
+    margin: 12px 0 8px 0;
+}
+
+.runner-status {
+    display: inline-block;
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    background: #f1f5f9;
+    color: #0f172a;
+}
+
+.runner-status.run-ready {
+    background: #ecfdf3;
+    color: #166534;
+}
+
+.runner-status.run-running {
+    background: #fff4e5;
+    color: #b45309;
+}
+
+.runner-status.run-error {
+    background: #fee2e2;
+    color: #b91c1c;
+}
+
+.sim-log {
+    background: #0d1b2a;
+    color: #e2e8f0;
+    border-radius: 6px;
+    padding: 12px;
+    min-height: 180px;
+    max-height: 320px;
+    overflow: auto;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-size: 12px;
+    border: 1px solid #e2e8f0;
+    white-space: pre-wrap;
+    margin: 0;
+}
+
+.sim-plot-wrapper {
+    margin-top: 16px;
+}
+
+.sim-plot-title {
+    margin: 0 0 6px 0;
+    font-size: 13px;
+    color: #475569;
+}
+
+.sim-plot {
+    width: 100%;
+    min-height: 320px;
+    background: #0d1b2a;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    padding: 6px;
+    color: #e2e8f0;
+}
+
 .mode-select { background: #fff; color: #333; }
 .mode-line { background: #333; color: #fff; }
 .mode-circle { background: #333; color: #fff; }
@@ -676,9 +920,10 @@ main {
     display: flex;
     flex-direction: column;
     gap: 12px;
-    max-width: 1200px;
-    margin: 0 auto;
-    height: calc(100vh - 100px);
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+    height: 100%;
 }
 
 .circuit-toolbar {
@@ -723,6 +968,7 @@ main {
     border-radius: 6px;
     overflow: hidden;
     min-height: 400px;
+    min-width: 0;
 }
 
 .circuit-canvas-wrapper canvas {
@@ -754,4 +1000,136 @@ main {
     border-radius: 6px;
     font-size: 12px;
     color: #666;
+}
+/* Simulation Badge */
+.simulation-badge {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    background: rgba(255, 255, 255, 0.95);
+    border: 1px solid #e5e5e5;
+    border-radius: 16px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #94a3b8;
+    cursor: pointer;
+    transition: all 0.2s;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.simulation-badge:hover {
+    background: rgba(255, 255, 255, 1);
+    border-color: #cbd5e1;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.simulation-badge .material-symbols-outlined {
+    font-size: 16px;
+}
+
+.simulation-badge.active {
+    background: #dbeafe;
+    border-color: #3b82f6;
+    color: #1e40af;
+}
+
+/* Simulation Modal Tabs */
+.sim-tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 20px;
+    border-bottom: 1px solid #e5e5e5;
+}
+
+.sim-tab {
+    padding: 8px 16px;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    font-size: 13px;
+    font-weight: 500;
+    color: #64748b;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.sim-tab:hover {
+    color: #334155;
+    background: #f8f9fa;
+}
+
+.sim-tab.active {
+    color: #3b82f6;
+    border-bottom-color: #3b82f6;
+}
+
+.sim-content {
+    position: relative;
+    min-height: 200px;
+}
+
+.sim-panel {
+    display: none;
+}
+
+.sim-panel.active {
+    display: block;
+}
+
+.sim-panel button.btn-primary {
+    margin-top: 16px;
+}
+
+.modal-field-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 12px;
+}
+
+.modal-field select {
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: 1px solid #e5e5e5;
+    font-size: 13px;
+    background: white;
+}
+
+/* Active Directives List */
+.directive-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    background: #f8f9fa;
+    border: 1px solid #e5e5e5;
+    border-radius: 6px;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    color: #334155;
+}
+
+.directive-item-actions {
+    display: flex;
+    gap: 4px;
+}
+
+.directive-item-actions button {
+    padding: 2px 6px;
+    font-size: 11px;
+    background: transparent;
+    border: 1px solid #cbd5e1;
+    border-radius: 4px;
+    cursor: pointer;
+    color: #64748b;
+    transition: all 0.15s;
+}
+
+.directive-item-actions button:hover {
+    background: #fff;
+    color: #ef4444;
+    border-color: #ef4444;
 }

@@ -6,39 +6,268 @@
     <title>Circuit Editor - SpicePad</title>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
     <link rel="stylesheet" href="/src/style.css">
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
 </head>
 <body>
     <h1>Circuit Editor</h1>
-    
-    <div class="circuit-editor-container">
-        <div class="circuit-toolbar">
-            <button class="btn btn-secondary tool-btn active" data-tool="wire" title="Wire Tool (W)">
-                <span class="material-symbols-outlined">timeline</span>
-                Wire
-            </button>
-            <button class="btn btn-secondary tool-btn" data-tool="select" title="Select Tool (S)">
-                <span class="material-symbols-outlined">arrow_selector_tool</span>
-                Select
-            </button>
-            <div class="separator"></div>
-            <button class="btn btn-secondary" id="clear-btn" title="Clear All">
-                <span class="material-symbols-outlined">delete</span>
-                Clear
-            </button>
-            <div class="separator"></div>
-            <span class="zoom-indicator" id="zoom-indicator">100%</span>
-        </div>
-        
-        <div class="circuit-canvas-wrapper">
-            <canvas id="circuit-canvas"></canvas>
-            <div class="canvas-info">
-                <span id="coord-display">X: 0 Y: 0</span>
-                <span id="grid-display">Grid: 10</span>
+
+    <div class="container">
+        <div class="workspace-grid">
+            <div class="panel components-panel">
+                <h2>Components</h2>
+                <div class="component-list" id="componentList"></div>
+            </div>
+
+            <div class="circuit-editor-container">
+                <div class="circuit-toolbar">
+                    <button class="btn btn-secondary tool-btn" data-tool="select" title="Select Tool (S)">
+                        <span class="material-symbols-outlined">arrow_selector_tool</span>
+                        Select
+                    </button>
+                    <div class="separator"></div>
+                    <button class="btn btn-primary" id="netlist-btn" title="View Netlist">
+                        <span class="material-symbols-outlined">code</span>
+                        Netlist
+                    </button>
+                    <button class="btn btn-secondary" id="simulation-btn" title="Simulation Settings">
+                        <span class="material-symbols-outlined">trending_up</span>
+                        Simulation
+                    </button>
+                    <div class="separator"></div>
+                    <button class="btn btn-secondary" id="save-btn" title="Save Circuit">
+                        <span class="material-symbols-outlined">save</span>
+                        Save
+                    </button>
+                    <button class="btn btn-secondary" id="load-btn" title="Load Circuit">
+                        <span class="material-symbols-outlined">folder_open</span>
+                        Load
+                    </button>
+                    <div class="separator"></div>
+                    <button class="btn btn-secondary" id="clear-btn" title="Clear All">
+                        <span class="material-symbols-outlined">delete</span>
+                        Clear
+                    </button>
+                    <div class="separator"></div>
+                    <span class="zoom-indicator" id="zoom-indicator">100%</span>
+                </div>
+                
+                <div class="circuit-canvas-wrapper">
+                    <canvas id="circuit-canvas"></canvas>
+                    <div class="canvas-info">
+                        <span id="coord-display">X: 0 Y: 0</span>
+                        <span id="grid-display">Grid: 10</span>
+                    </div>
+                    <div class="simulation-badge" id="simulation-badge" title="Click to configure simulation">
+                        <span class="material-symbols-outlined">science</span>
+                        <span id="simulation-badge-text">No Sim</span>
+                    </div>
+                </div>
+                
+                <div class="circuit-status-bar">
+                    <span id="status-message">Ready</span>
+                </div>
             </div>
         </div>
-        
-        <div class="circuit-status-bar">
-            <span id="status-message">Ready</span>
+    </div>
+
+    <div class="panel sim-runner-panel">
+        <div class="sim-runner-header">
+            <div>
+                <h2 style="margin: 0;">Ngspice Runner</h2>
+                <p class="sim-runner-subtitle">Send the generated netlist to the bundled ngspice WASM worker and stream the output below.</p>
+            </div>
+            <button class="btn btn-primary" id="sim-run-btn" title="Run ngspice">
+                <span class="material-symbols-outlined">play_arrow</span>
+                Run
+            </button>
+        </div>
+        <div class="sim-runner-status-row">
+            <span id="sim-status" class="runner-status run-ready">Ready</span>
+        </div>
+        <pre id="sim-log" class="sim-log">Click Run to simulate the current circuit.</pre>
+        <div class="sim-plot-wrapper">
+            <h3 class="sim-plot-title">Plot</h3>
+            <div id="sim-plot" class="sim-plot">No data yet</div>
+        </div>
+    </div>
+
+    <!-- Hidden file input for loading circuits -->
+    <input type="file" id="file-input" accept=".json,.spicepad" style="display: none;" />
+
+    <div class="modal-overlay" id="simulation-modal" aria-hidden="true">
+        <div class="modal modal-large" role="dialog" aria-modal="true" aria-labelledby="simulation-modal-title">
+            <div class="modal-header">
+                <h3 id="simulation-modal-title">Simulation Settings</h3>
+                <button class="btn btn-secondary modal-close" type="button" aria-label="Close" id="simulation-modal-close">Close</button>
+            </div>
+            <div class="modal-body">
+                <div class="sim-tabs">
+                    <button class="sim-tab active" data-tab="dc">DC Sweep</button>
+                    <button class="sim-tab" data-tab="ac">AC Analysis</button>
+                    <button class="sim-tab" data-tab="tran">Transient</button>
+                    <button class="sim-tab" data-tab="op">Operating Point</button>
+                    <button class="sim-tab" data-tab="custom">Custom</button>
+                </div>
+
+                <div class="sim-content">
+                    <!-- DC Sweep -->
+                    <div class="sim-panel active" data-panel="dc">
+                        <div class="modal-field">
+                            <label for="dc-source">Source Name</label>
+                            <input type="text" id="dc-source" placeholder="V1" />
+                        </div>
+                        <div class="modal-field-row">
+                            <div class="modal-field">
+                                <label for="dc-start">Start</label>
+                                <input type="text" id="dc-start" placeholder="0" />
+                            </div>
+                            <div class="modal-field">
+                                <label for="dc-stop">Stop</label>
+                                <input type="text" id="dc-stop" placeholder="5" />
+                            </div>
+                            <div class="modal-field">
+                                <label for="dc-step">Step</label>
+                                <input type="text" id="dc-step" placeholder="0.1" />
+                            </div>
+                        </div>
+                        <button class="btn btn-primary" id="add-dc-btn">Add DC Sweep</button>
+                    </div>
+
+                    <!-- AC Analysis -->
+                    <div class="sim-panel" data-panel="ac">
+                        <div class="modal-field">
+                            <label for="ac-type">Variation Type</label>
+                            <select id="ac-type">
+                                <option value="dec">Decade (dec)</option>
+                                <option value="oct">Octave (oct)</option>
+                                <option value="lin">Linear (lin)</option>
+                            </select>
+                        </div>
+                        <div class="modal-field-row">
+                            <div class="modal-field">
+                                <label for="ac-points">Points per Interval</label>
+                                <input type="text" id="ac-points" placeholder="10" />
+                            </div>
+                            <div class="modal-field">
+                                <label for="ac-fstart">Start Frequency</label>
+                                <input type="text" id="ac-fstart" placeholder="1" />
+                            </div>
+                            <div class="modal-field">
+                                <label for="ac-fstop">Stop Frequency</label>
+                                <input type="text" id="ac-fstop" placeholder="1Meg" />
+                            </div>
+                        </div>
+                        <button class="btn btn-primary" id="add-ac-btn">Add AC Analysis</button>
+                    </div>
+
+                    <!-- Transient -->
+                    <div class="sim-panel" data-panel="tran">
+                        <div class="modal-field-row">
+                            <div class="modal-field">
+                                <label for="tran-tstep">Time Step</label>
+                                <input type="text" id="tran-tstep" placeholder="1u" />
+                            </div>
+                            <div class="modal-field">
+                                <label for="tran-tstop">Stop Time</label>
+                                <input type="text" id="tran-tstop" placeholder="1m" />
+                            </div>
+                        </div>
+                        <div class="modal-field-row">
+                            <div class="modal-field">
+                                <label for="tran-tstart">Start Time (optional)</label>
+                                <input type="text" id="tran-tstart" placeholder="0" />
+                            </div>
+                            <div class="modal-field">
+                                <label for="tran-tmax">Max Time Step (optional)</label>
+                                <input type="text" id="tran-tmax" placeholder="" />
+                            </div>
+                        </div>
+                        <button class="btn btn-primary" id="add-tran-btn">Add Transient Analysis</button>
+                    </div>
+
+                    <!-- Operating Point -->
+                    <div class="sim-panel" data-panel="op">
+                        <p style="color: #64748b; font-size: 13px; margin: 0 0 16px 0;">
+                            Operating point analysis calculates DC node voltages and currents with all time-varying sources set to their DC values.
+                        </p>
+                        <button class="btn btn-primary" id="add-op-btn">Add Operating Point</button>
+                    </div>
+
+                    <!-- Custom -->
+                    <div class="sim-panel" data-panel="custom">
+                        <div class="modal-field">
+                            <label for="custom-directive">Custom SPICE Directives</label>
+                            <textarea id="custom-directive" rows="6" placeholder=".param Vcc=5\n.temp 27\n.include mymodel.lib" style="font-family: 'Courier New', monospace; font-size: 13px; padding: 8px; border: 1px solid #e5e5e5; border-radius: 6px; resize: vertical;"></textarea>
+                        </div>
+                        <button class="btn btn-primary" id="add-custom-btn">Add Custom Directives</button>
+                    </div>
+                </div>
+
+                <div class="sim-directives-section">
+                    <h4 style="font-size: 13px; font-weight: 600; margin: 16px 0 8px 0; color: #475569;">Active Directives</h4>
+                    <div id="active-directives" style="display: flex; flex-direction: column; gap: 6px; max-height: 150px; overflow-y: auto;">
+                        <div style="color: #94a3b8; font-size: 12px; padding: 12px; text-align: center;">No directives added yet</div>
+                    </div>
+                </div>
+
+                <div class="sim-preview-section">
+                    <h4 style="font-size: 13px; font-weight: 600; margin: 16px 0 8px 0; color: #475569;">Preview</h4>
+                    <pre id="sim-preview" style="background: #f8f9fa; padding: 12px; border-radius: 4px; font-family: 'Courier New', monospace; font-size: 12px; color: #334155; margin: 0; max-height: 100px; overflow: auto;">* No directives</pre>
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" type="button" id="simulation-clear-btn">Clear All</button>
+                <button class="btn btn-primary" type="button" id="simulation-done-btn">Done</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="netlist-modal" aria-hidden="true">
+        <div class="modal modal-large" role="dialog" aria-modal="true" aria-labelledby="netlist-modal-title">
+            <div class="modal-header">
+                <h3 id="netlist-modal-title">Ngspice Netlist</h3>
+                <button class="btn btn-secondary modal-close" type="button" aria-label="Close" id="netlist-modal-close">Close</button>
+            </div>
+            <div class="modal-body">
+                <pre id="netlist-content" style="background: #f8f9fa; padding: 1rem; border-radius: 4px; overflow: auto; max-height: 60vh; font-family: 'Courier New', monospace; font-size: 0.9rem;"></pre>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" type="button" id="netlist-copy-btn">
+                    <span class="material-symbols-outlined">content_copy</span>
+                    Copy to Clipboard
+                </button>
+                <button class="btn btn-primary" type="button" id="netlist-download-btn">
+                    <span class="material-symbols-outlined">download</span>
+                    Download .cir
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="component-modal" aria-hidden="true">
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="component-modal-title">
+            <div class="modal-header">
+                <h3 id="component-modal-title">Edit Component</h3>
+                <button class="btn btn-secondary modal-close" type="button" aria-label="Close">Close</button>
+            </div>
+            <div class="modal-body">
+                <div class="modal-field">
+                    <label for="component-label-input">Label</label>
+                    <input type="text" id="component-label-input" />
+                </div>
+                <div class="modal-field" id="component-value-field">
+                    <label for="component-value-input">Value</label>
+                    <input type="text" id="component-value-input" />
+                </div>
+                <div class="modal-field">
+                    <label for="component-spice-input">Spice Model (optional)</label>
+                    <input type="text" id="component-spice-input" placeholder=".model ..." />
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" type="button" id="component-modal-cancel">Cancel</button>
+                <button class="btn btn-primary" type="button" id="component-modal-save">Save</button>
+            </div>
         </div>
     </div>
 

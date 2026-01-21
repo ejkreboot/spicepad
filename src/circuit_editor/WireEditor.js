@@ -34,6 +34,7 @@ export class WireEditor {
         this.nodeColor = '#000000';
         this.junctionColor = '#000000';
         this.junctionRadius = 4;
+        this.selectedSegmentIds = new Set();
         
         // Interaction state
         this.mode = 'idle'; // 'idle' | 'drawing' | 'dragging'
@@ -84,23 +85,20 @@ export class WireEditor {
         const originalOnClick = this.viewport.onClick;
         
         this.viewport.onMouseDown = (worldX, worldY, event) => {
-            if (this.isActive) {
-                this._onMouseDown(worldX, worldY, event);
-            }
+            // Always call handler - it will decide internally what to do based on tool state
+            this._onMouseDown(worldX, worldY, event);
             originalOnMouseDown?.(worldX, worldY, event);
         };
         
         this.viewport.onMouseMove = (worldX, worldY, event) => {
-            if (this.isActive) {
-                this._onMouseMove(worldX, worldY, event);
-            }
+            // Always call handler - it will decide internally what to do based on tool state
+            this._onMouseMove(worldX, worldY, event);
             originalOnMouseMove?.(worldX, worldY, event);
         };
         
         this.viewport.onMouseUp = (worldX, worldY, event) => {
-            if (this.isActive) {
-                this._onMouseUp(worldX, worldY, event);
-            }
+            // Always call handler - it will decide internally what to do based on tool state
+            this._onMouseUp(worldX, worldY, event);
             originalOnMouseUp?.(worldX, worldY, event);
         };
         
@@ -113,6 +111,7 @@ export class WireEditor {
     // ==================== Event Handlers ====================
     
     _onMouseDown(worldX, worldY, event) {
+        if (event?.__selectionHandled) return;
         if (event?.__componentHandled) return;
         if (event.button !== 0) return; // Only left click
         if (event.shiftKey) return; // Shift+click is for panning
@@ -123,7 +122,8 @@ export class WireEditor {
         this.mouseDownTime = Date.now();
         this.isDragging = false;
         
-        if (this.mode === 'idle') {
+        // Only allow dragging when wire tool is NOT active (i.e., select tool is active)
+        if (this.mode === 'idle' && !this.isActive) {
             // Check if we're clicking on an existing node or segment to drag
             const hitNode = this.wireGraph.getNodeAt(snapped.x, snapped.y, this.nodeHitTolerance);
             const hitSegment = this.wireGraph.getSegmentAt(snapped.x, snapped.y, this.segmentHitTolerance);
@@ -160,11 +160,12 @@ export class WireEditor {
     }
     
     _onMouseMove(worldX, worldY, event) {
+        if (event?.__selectionHandled) return;
         if (event?.__componentHandled) return;
         const snapped = this.viewport.snapToGrid(worldX, worldY);
         
-        // Check for drag threshold
-        if (this.mouseDownPos && !this.isDragging && this.mode !== 'drawing') {
+        // Check for drag threshold (only when wire tool is not active)
+        if (this.mouseDownPos && !this.isDragging && this.mode !== 'drawing' && !this.isActive) {
             const dx = worldX - this.mouseDownPos.x;
             const dy = worldY - this.mouseDownPos.y;
             const dist = Math.sqrt(dx * dx + dy * dy);
@@ -192,6 +193,7 @@ export class WireEditor {
     }
     
     _onMouseUp(worldX, worldY, event) {
+        if (event?.__selectionHandled) return;
         if (event?.__componentHandled) return;
         if (event.button !== 0) return;
         
@@ -250,6 +252,9 @@ export class WireEditor {
     // ==================== Drawing Mode ====================
     
     _handleIdleClick(x, y) {
+        // Only start drawing if wire tool is active
+        if (!this.isActive) return;
+        
         // Check if clicking on existing node
         const hitNode = this.wireGraph.getNodeAt(x, y, this.nodeHitTolerance);
         
@@ -625,8 +630,8 @@ export class WireEditor {
         // The bend nodes created during drag are now permanent
         // Just clear the tracking and run cleanup
         
-        // Check for new junctions (segment intersections)
-        this._checkForNewJunctions();
+        // NOTE: We no longer auto-create junctions during drag
+        // Junctions are only created by explicit clicks while drawing
         
         // Clean up the graph (merges collinear segments, etc.)
         this.wireGraph.cleanup();
@@ -806,8 +811,9 @@ export class WireEditor {
         const node2 = this.wireGraph.getNode(segment.nodeId2);
         if (!node1 || !node2) return;
         
-        const color = isHovered ? this.wireHighlightColor : this.wireColor;
-        const lineWidth = isHovered ? 3 : 2;
+        const isSelected = this.selectedSegmentIds?.has(segment.id);
+        const color = (isSelected || isHovered) ? this.wireHighlightColor : this.wireColor;
+        const lineWidth = isSelected ? 3 : (isHovered ? 3 : 2);
         
         viewport.drawLine(node1.x, node1.y, node2.x, node2.y, color, lineWidth);
     }
@@ -846,6 +852,11 @@ export class WireEditor {
         if (!active && this.mode === 'drawing') {
             this._finishDrawing();
         }
+    }
+
+    setSelectedSegments(segments) {
+        this.selectedSegmentIds = segments ? new Set(segments) : new Set();
+        this.viewport.render();
     }
     
     /**

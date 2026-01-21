@@ -31,8 +31,9 @@ export class CanvasViewport {
         
         // Transform state (world coordinates)
         this.zoom = 1;
-        this.panX = 0;  // World offset (pan position in world units)
+        this.panX = 0;  // World offset (pan position in world units) - will be set after resize
         this.panY = 0;
+        this._needsCentering = true; // Flag to center on first render
         
         // Interaction state
         this.isPanning = false;
@@ -59,21 +60,33 @@ export class CanvasViewport {
      * Setup canvas for high-DPI displays
      */
     _setupCanvas() {
-        this._resizeCanvas();
+        this.canvas.style.width = '100%';
+        this.canvas.style.height = '100%';
+        this.canvas.style.display = 'block';
+        this._scheduleResize();
         
         // Watch for container resize
-        this.resizeObserver = new ResizeObserver(() => this._resizeCanvas());
+        this.resizeObserver = new ResizeObserver(() => this._scheduleResize());
         this.resizeObserver.observe(this.canvas.parentElement);
+    }
+
+    _scheduleResize() {
+        if (this._resizeRaf) {
+            cancelAnimationFrame(this._resizeRaf);
+        }
+        this._resizeRaf = requestAnimationFrame(() => {
+            this._resizeRaf = null;
+            this._resizeCanvas();
+        });
     }
     
     _resizeCanvas() {
-        const rect = this.canvas.parentElement.getBoundingClientRect();
-        const width = rect.width;
-        const height = rect.height;
-        
-        // Set display size
-        this.canvas.style.width = `${width}px`;
-        this.canvas.style.height = `${height}px`;
+        const parent = this.canvas.parentElement;
+        const width = parent?.clientWidth ?? 0;
+        const height = parent?.clientHeight ?? 0;
+
+        if (width <= 0 || height <= 0) return;
+        if (width === this.width && height === this.height) return;
         
         // Set actual size in memory (scaled for DPI)
         this.canvas.width = width * this.dpr;
@@ -82,6 +95,13 @@ export class CanvasViewport {
         // Store logical dimensions for calculations
         this.width = width;
         this.height = height;
+        
+        // Center on origin on first resize
+        if (this._needsCentering) {
+            this.panX = width / (2 * this.zoom);
+            this.panY = height / (2 * this.zoom);
+            this._needsCentering = false;
+        }
         
         this.render();
     }
