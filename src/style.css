@@ -263,6 +263,28 @@ h1 {
     border-color: #2563eb;
 }
 
+/* Probe tool active state - rose color to match probe appearance */
+.tool-btn[data-tool="probe"].active {
+    background: #e11d48;
+    border-color: #e11d48;
+}
+
+.tool-btn[data-tool="probe"].active:hover {
+    background: #be123c;
+    border-color: #be123c;
+}
+
+/* Delete tool active state - red/danger color */
+.tool-btn[data-tool="delete"].active {
+    background: #ef4444;
+    border-color: #ef4444;
+}
+
+.tool-btn[data-tool="delete"].active:hover {
+    background: #dc2626;
+    border-color: #dc2626;
+}
+
 .component-item.tool-item.active {
     background: #f0fdf4;
     border: 2px solid #10b981;

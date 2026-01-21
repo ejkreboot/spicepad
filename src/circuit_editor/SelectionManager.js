@@ -30,6 +30,35 @@ export class SelectionManager {
         this._applySelectionToManagers();
     }
 
+    /**
+     * Delete all currently selected components and wire segments
+     * @returns {boolean} True if anything was deleted
+     */
+    deleteSelected() {
+        const hadSelection = this.selectedComponentIds.size > 0 || this.selectedSegmentIds.size > 0;
+        
+        // Delete selected components
+        for (const componentId of this.selectedComponentIds) {
+            this.componentManager.removeComponent(componentId);
+        }
+        
+        // Delete selected wire segments
+        for (const segmentId of this.selectedSegmentIds) {
+            const segment = this.wireGraph.getSegment(segmentId);
+            if (segment) {
+                this.wireGraph.removeSegment(segment.nodeId1, segment.nodeId2);
+            }
+        }
+        
+        // Clean up orphaned nodes
+        this.wireGraph.cleanup();
+        
+        // Clear the selection
+        this.clearSelection();
+        
+        return hadSelection;
+    }
+
     _applySelectionToManagers() {
         this.componentManager.setSelectedComponents(this.selectedComponentIds);
         this.wireEditor.setSelectedSegments(this.selectedSegmentIds);

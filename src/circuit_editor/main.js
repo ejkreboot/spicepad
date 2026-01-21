@@ -15,6 +15,7 @@ import { WireEditor } from './WireEditor.js';
 import { ComponentManager } from './ComponentManager.js';
 import { SelectionManager } from './SelectionManager.js';
 import { NetlistGenerator } from './NetlistGenerator.js';
+import { ProbeManager } from './ProbeManager.js';
 import { loadLibrary } from '../common/storage/library.js';
 import { DEFAULT_COMPONENT_LIBRARY } from '../common/defaultComponents.js';
 import { createComponentFromDefinition, Component } from './Component.js';
@@ -42,9 +43,11 @@ class CircuitEditorApp {
             wireGraph: this.wireGraph,
             componentManager: this.componentManager,
             wireEditor: this.wireEditor,
-            isSelectionEnabled: () => !this.wireEditor.isActive && !this.selectedComponentId
+            isSelectionEnabled: () => !this.wireEditor.isActive && !this.selectedComponentId && this._currentTool !== 'probe'
         });
         this.netlistGenerator = new NetlistGenerator(this.componentManager, this.wireGraph);
+        this.probeManager = new ProbeManager(this.viewport, this.wireGraph, this.componentManager);
+        this.netlistGenerator.setProbeManager(this.probeManager);
         this._componentCounter = 1;
         this._designatorCounters = new Map();
         this.componentLibrary = {};
@@ -55,6 +58,7 @@ class CircuitEditorApp {
         this._modalOpen = false;
         this._editingComponent = null;
         this._autoSaveInterval = null;
+        this._currentTool = 'select'; // Track current tool: 'select', 'wire', 'probe'
         
         // Simulation directives
         this.simulationDirectives = [];
@@ -143,6 +147,7 @@ class CircuitEditorApp {
                     this.wireEditor.clear();
                     this.componentManager.components = [];
                     this.componentManager.pinNodeIdsByComponent.clear();
+                    this.probeManager.clear();
                     this._componentCounter = 1;
                     this._designatorCounters.clear();
                     this._saveToLocalStorage();
@@ -245,6 +250,7 @@ class CircuitEditorApp {
     _clearSelection() {
         this.selectionManager?.clearSelection();
         this.selectedComponentId = null;
+        this.probeManager.selectedProbeId = null;
         const list = document.getElementById('componentList');
         if (list) {
             list.querySelectorAll('.component-item').forEach(item => {
@@ -257,14 +263,28 @@ class CircuitEditorApp {
     }
     
     _setTool(toolName) {
+        this._currentTool = toolName;
         switch (toolName) {
             case 'wire':
                 this._clearSelection();
                 this.wireEditor.setActive(true);
+                this.probeManager.setGhostPosition(null);
                 this.canvas.style.cursor = 'crosshair';
+                break;
+            case 'probe':
+                this._clearSelection();
+                this.wireEditor.setActive(false);
+                this.canvas.style.cursor = 'crosshair';
+                break;
+            case 'delete':
+                this._clearSelection();
+                this.wireEditor.setActive(false);
+                this.probeManager.setGhostPosition(null);
+                this.canvas.style.cursor = 'not-allowed';
                 break;
             case 'select':
                 this.wireEditor.setActive(false);
+                this.probeManager.setGhostPosition(null);
                 this.canvas.style.cursor = 'default';
                 break;
         }
@@ -311,12 +331,31 @@ class CircuitEditorApp {
                         this._updateToolButtons('select');
                     }
                     break;
+                case 'p':
+                    if (!event.ctrlKey && !event.metaKey) {
+                        this._setTool('probe');
+                        this._updateToolButtons('probe');
+                    }
+                    break;
+                case 'd':
+                    if (!event.ctrlKey && !event.metaKey) {
+                        this._setTool('delete');
+                        this._updateToolButtons('delete');
+                    }
+                    break;
                 case 'r':
                     if (!event.ctrlKey && !event.metaKey) {
                         // Rotate ghost component during placement
                         if (this._ghostComponent && this.selectedComponentId) {
                             this._ghostComponent.rotate();
                             this.viewport.render();
+                        } else if (this._currentTool === 'probe') {
+                            // Rotate probe ghost or selected probe
+                            if (this.probeManager.selectedProbeId) {
+                                this.probeManager.rotateProbe(this.probeManager.selectedProbeId);
+                            } else {
+                                this.probeManager.rotateGhost();
+                            }
                         } else {
                             // Rotate component under mouse cursor
                             const mouse = this.viewport.getMouseWorld();
@@ -325,14 +364,90 @@ class CircuitEditorApp {
                                 hit.rotate();
                                 this.viewport.render();
                             } else {
-                                // Reset view if no component is under cursor and not in placement mode
-                                this.viewport.resetView();
+                                // Check for probe under cursor
+                                const probe = this.probeManager.getProbeAt(mouse.x, mouse.y);
+                                if (probe) {
+                                    this.probeManager.rotateProbe(probe.id);
+                                } else {
+                                    // Reset view if nothing is under cursor
+                                    this.viewport.resetView();
+                                }
                             }
                         }
                     }
                     break;
+                case 'delete':
+                case 'backspace':
+                    if (!event.ctrlKey && !event.metaKey) {
+                        this._deleteSelected();
+                        event.preventDefault();
+                    }
+                    break;
             }
         });
+    }
+    
+    /**
+     * Delete all selected items (components, wires, and probes)
+     */
+    _deleteSelected() {
+        let deleted = false;
+        
+        // Delete selected probe
+        if (this.probeManager.selectedProbeId) {
+            this.probeManager.removeProbe(this.probeManager.selectedProbeId);
+            deleted = true;
+        }
+        
+        // Delete selected components and wires via SelectionManager
+        if (this.selectionManager.deleteSelected()) {
+            deleted = true;
+        }
+        
+        if (deleted) {
+            this._saveToLocalStorage();
+            this.viewport.render();
+        }
+    }
+    
+    /**
+     * Delete item at the given world position (for delete tool)
+     * @param {number} worldX
+     * @param {number} worldY
+     */
+    _deleteItemAt(worldX, worldY) {
+        let deleted = false;
+        
+        // Check for probe first
+        const probe = this.probeManager.getProbeAt(worldX, worldY);
+        if (probe) {
+            this.probeManager.removeProbe(probe.id);
+            deleted = true;
+        }
+        
+        // Check for component
+        if (!deleted) {
+            const component = this.componentManager.getComponentAt(worldX, worldY);
+            if (component) {
+                this.componentManager.removeComponent(component.id);
+                deleted = true;
+            }
+        }
+        
+        // Check for wire segment
+        if (!deleted) {
+            const segmentHit = this.wireGraph.getSegmentAt(worldX, worldY, this.wireEditor.segmentHitTolerance ?? 5);
+            if (segmentHit) {
+                this.wireGraph.removeSegment(segmentHit.segment.nodeId1, segmentHit.segment.nodeId2);
+                this.wireGraph.cleanup();
+                deleted = true;
+            }
+        }
+        
+        if (deleted) {
+            this._saveToLocalStorage();
+            this.viewport.render();
+        }
     }
 
     _setupComponentEditor() {
@@ -359,11 +474,28 @@ class CircuitEditorApp {
             const screenX = event.clientX - rect.left;
             const screenY = event.clientY - rect.top;
             const world = this.viewport.screenToWorld(screenX, screenY);
+            
+            // Check for probe first
+            const probe = this.probeManager.getProbeAt(world.x, world.y);
+            if (probe) {
+                event.preventDefault();
+                this._editProbeLabel(probe);
+                return;
+            }
+            
             const hit = this.componentManager.getComponentAt(world.x, world.y);
             if (!hit) return;
             event.preventDefault();
             this._openComponentModal(hit);
         });
+    }
+    
+    _editProbeLabel(probe) {
+        const newLabel = prompt('Enter probe label:', probe.label);
+        if (newLabel !== null && newLabel.trim() !== '') {
+            this.probeManager.updateProbeLabel(probe.id, newLabel.trim());
+            this._saveToLocalStorage();
+        }
     }
 
     _openComponentModal(component) {
@@ -451,18 +583,82 @@ class CircuitEditorApp {
                 return;
             }
 
+            const snapped = this.viewport.snapToGrid(worldX, worldY);
+
+            // Handle delete tool
+            if (this._currentTool === 'delete') {
+                this._deleteItemAt(snapped.x, snapped.y);
+                originalOnClick?.(worldX, worldY, event);
+                return;
+            }
+
+            // Handle probe tool
+            if (this._currentTool === 'probe') {
+                // Check if clicking on existing probe
+                const existingProbe = this.probeManager.getProbeAt(snapped.x, snapped.y);
+                if (existingProbe) {
+                    this.probeManager.selectedProbeId = existingProbe.id;
+                    this.viewport.render();
+                } else {
+                    // Place new probe
+                    this.probeManager.addProbe(snapped.x, snapped.y, null, this.probeManager.getGhostRotation());
+                }
+                originalOnClick?.(worldX, worldY, event);
+                return;
+            }
+
             if (!this.selectedComponentId) {
                 originalOnClick?.(worldX, worldY, event);
                 return;
             }
 
-            const snapped = this.viewport.snapToGrid(worldX, worldY);
             const hit = this.componentManager.getComponentAt(snapped.x, snapped.y);
             if (!hit) {
                 this._placeSelectedComponent(snapped);
             }
 
             originalOnClick?.(worldX, worldY, event);
+        };
+
+        // Set up probe mouse move for ghost preview
+        const originalOnMouseMove = this.viewport.onMouseMove;
+        this.viewport.onMouseMove = (worldX, worldY, event) => {
+            originalOnMouseMove?.(worldX, worldY, event);
+            
+            if (this._currentTool === 'probe') {
+                const snapped = this.viewport.snapToGrid(worldX, worldY);
+                this.probeManager.setGhostPosition(snapped);
+            }
+        };
+
+        // Set up probe dragging
+        const originalOnMouseDown = this.viewport.onMouseDown;
+        this.viewport.onMouseDown = (worldX, worldY, event) => {
+            // Let probe manager handle first if not in probe placement mode
+            if (this._currentTool !== 'probe' && !this.wireEditor.isActive) {
+                if (this.probeManager.onMouseDown(worldX, worldY, event)) {
+                    event.__probeHandled = true;
+                    return;
+                }
+            }
+            originalOnMouseDown?.(worldX, worldY, event);
+        };
+
+        const originalOnMouseUp = this.viewport.onMouseUp;
+        this.viewport.onMouseUp = (worldX, worldY, event) => {
+            if (this.probeManager.onMouseUp(worldX, worldY, event)) {
+                event.__probeHandled = true;
+            }
+            originalOnMouseUp?.(worldX, worldY, event);
+        };
+
+        // Hook into mouse move for probe dragging
+        const existingOnMouseMove = this.viewport.onMouseMove;
+        this.viewport.onMouseMove = (worldX, worldY, event) => {
+            if (this.probeManager.onMouseMove(worldX, worldY, event)) {
+                event.__probeHandled = true;
+            }
+            existingOnMouseMove?.(worldX, worldY, event);
         };
     }
 
@@ -928,7 +1124,11 @@ class CircuitEditorApp {
             return;
         }
 
-        const { netlist } = netlistData;
+        const { netlist, probeInfo, analysisType } = netlistData;
+        
+        // Store for use in plotting
+        this._lastProbeInfo = probeInfo;
+        this._lastAnalysisType = analysisType;
 
         this.spiceOutputEl.textContent = 'Starting simulation...';
         this._clearPlot();
@@ -973,7 +1173,7 @@ class CircuitEditorApp {
                     if (outputData) {
                         this._appendRunOutput('--- output.txt ---');
                         this._appendRunOutput(outputData);
-                        this._plotResults(outputData);
+                        this._plotResults(outputData, this._lastProbeInfo, this._lastAnalysisType);
                     } else {
                         this._appendRunOutput('[note] No output.txt file generated');
                         if (stdout) {
@@ -1047,11 +1247,17 @@ class CircuitEditorApp {
             return /^\d/.test(trimmed) || /^-?\d*\.\d+/.test(trimmed);
         });
         if (dataLines.length > 0) {
-            this._plotResults(dataLines.join('\n'));
+            this._plotResults(dataLines.join('\n'), this._lastProbeInfo, this._lastAnalysisType);
         }
     }
 
-    _plotResults(data) {
+    /**
+     * Plot simulation results with support for different analysis types
+     * @param {string} data - Raw output data
+     * @param {Array<{label: string, node: string}>} probeInfo - Probe metadata
+     * @param {string} analysisType - Type of analysis ('ac', 'tran', 'dc', 'op')
+     */
+    _plotResults(data, probeInfo = [], analysisType = 'tran') {
         if (!this.spicePlotEl) return;
         if (!data || !data.trim()) return;
         if (!window.Plotly) {
@@ -1071,34 +1277,95 @@ class CircuitEditorApp {
             return;
         }
 
-        const time = [];
-        const signals = {};
+        // Parse based on analysis type
+        if (analysisType === 'ac') {
+            this._plotAcResults(lines, probeInfo);
+        } else {
+            this._plotTimeDomainResults(lines, probeInfo, analysisType);
+        }
+    }
+
+    /**
+     * Plot AC analysis results (frequency domain with complex numbers)
+     * wrdata format for AC: freq v(1)_real v(1)_imag freq v(2)_real v(2)_imag ...
+     */
+    _plotAcResults(lines, probeInfo) {
+        const colsPerSignal = 3; // freq, real, imag
+        
+        // Infer number of signals from data columns (more reliable than probeInfo.length)
+        const firstLine = lines.find(l => l.trim().length > 0);
+        if (!firstLine) {
+            this._appendRunOutput('[note] No AC data to plot');
+            return;
+        }
+        const firstParts = firstLine.trim().split(/\s+/);
+        const numSignals = Math.floor(firstParts.length / colsPerSignal);
+        
+        console.log('[AC Plot] First line parts:', firstParts.length, 'Num signals:', numSignals);
+        console.log('[AC Plot] probeInfo:', probeInfo);
+        
+        if (numSignals === 0) {
+            this._appendRunOutput('[note] Invalid AC data format');
+            return;
+        }
+        
+        // Default colors for signals without probe colors
+        const defaultColors = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'];
+        
+        const signals = [];
+        for (let i = 0; i < numSignals; i++) {
+            signals.push({
+                label: probeInfo[i]?.label || `Signal ${i + 1}`,
+                color: probeInfo[i]?.color || defaultColors[i % defaultColors.length],
+                freq: [],
+                magnitude: [],
+                phase: []
+            });
+        }
 
         lines.forEach((line) => {
             const parts = line.trim().split(/\s+/).map(Number);
-            if (parts.length >= 2 && Number.isFinite(parts[0]) && Number.isFinite(parts[1])) {
-                time.push(parts[0]);
-                parts.slice(1).forEach((val, i) => {
-                    const sigName = i === 0 ? 'V(in)' : i === 1 ? 'V(out)' : `Signal ${i + 1}`;
-                    if (!signals[sigName]) signals[sigName] = [];
-                    signals[sigName].push(val);
-                });
+            if (parts.length < colsPerSignal) return;
+            
+            // Parse each signal's data (freq, real, imag triplets)
+            for (let i = 0; i < numSignals; i++) {
+                const baseIdx = i * colsPerSignal;
+                if (baseIdx + 2 >= parts.length) break;
+                
+                const freq = parts[baseIdx];
+                const real = parts[baseIdx + 1];
+                const imag = parts[baseIdx + 2];
+                
+                if (!Number.isFinite(freq) || !Number.isFinite(real) || !Number.isFinite(imag)) continue;
+                
+                // Calculate magnitude and phase
+                const magnitude = Math.sqrt(real * real + imag * imag);
+                const phase = Math.atan2(imag, real) * (180 / Math.PI);
+                
+                signals[i].freq.push(freq);
+                signals[i].magnitude.push(magnitude);
+                signals[i].phase.push(phase);
             }
         });
 
-        if (time.length === 0) {
-            this._appendRunOutput('[note] Unable to parse data for plotting');
+        // Filter out signals with no data
+        const validSignals = signals.filter(s => s.freq.length > 0);
+        
+        if (validSignals.length === 0) {
+            this._appendRunOutput('[note] Unable to parse AC data for plotting');
             return;
         }
 
-        const colors = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b'];
-        const traces = Object.entries(signals).map(([name, values], i) => ({
-            x: time,
-            y: values,
+        const colors = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'];
+        
+        // Create magnitude traces using probe colors
+        const traces = validSignals.map((sig, i) => ({
+            x: sig.freq,
+            y: sig.magnitude.map(m => 20 * Math.log10(Math.max(m, 1e-12))), // dB scale
             type: 'scatter',
             mode: 'lines',
-            name,
-            line: { color: colors[i % colors.length], width: 2 }
+            name: `${sig.label} (dB)`,
+            line: { color: sig.color || colors[i % colors.length], width: 2 }
         }));
 
         const layout = {
@@ -1106,7 +1373,82 @@ class CircuitEditorApp {
             plot_bgcolor: '#0d1b2a',
             font: { color: '#e2e8f0' },
             xaxis: {
-                title: 'Time (s)',
+                title: 'Frequency (Hz)',
+                type: 'log',
+                gridcolor: '#1f2937',
+                zerolinecolor: '#1f2937'
+            },
+            yaxis: {
+                title: 'Magnitude (dB)',
+                gridcolor: '#1f2937',
+                zerolinecolor: '#1f2937'
+            },
+            margin: { t: 30, r: 20, b: 50, l: 55 },
+            legend: {
+                x: 1,
+                xanchor: 'right',
+                y: 1,
+                bgcolor: 'rgba(13, 27, 42, 0.85)'
+            }
+        };
+
+        window.Plotly.newPlot(this.spicePlotEl, traces, layout, { responsive: true });
+    }
+
+    /**
+     * Plot time-domain results (transient, DC sweep)
+     */
+    _plotTimeDomainResults(lines, probeInfo, analysisType) {
+        const xValues = [];
+        const signals = {};
+        const signalColors = {};
+
+        lines.forEach((line) => {
+            const parts = line.trim().split(/\s+/).map(Number);
+            if (parts.length >= 2 && Number.isFinite(parts[0]) && Number.isFinite(parts[1])) {
+                xValues.push(parts[0]);
+                parts.slice(1).forEach((val, i) => {
+                    // Use probe labels if available, otherwise generic names
+                    let sigName;
+                    if (probeInfo && probeInfo[i]) {
+                        sigName = probeInfo[i].label;
+                        signalColors[sigName] = probeInfo[i].color;
+                    } else {
+                        sigName = `Signal ${i + 1}`;
+                    }
+                    if (!signals[sigName]) signals[sigName] = [];
+                    signals[sigName].push(val);
+                });
+            }
+        });
+
+        if (xValues.length === 0) {
+            this._appendRunOutput('[note] Unable to parse data for plotting');
+            return;
+        }
+
+        const defaultColors = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'];
+        const traces = Object.entries(signals).map(([name, values], i) => ({
+            x: xValues,
+            y: values,
+            type: 'scatter',
+            mode: 'lines',
+            name,
+            line: { color: signalColors[name] || defaultColors[i % defaultColors.length], width: 2 }
+        }));
+
+        // Determine axis labels based on analysis type
+        let xAxisTitle = 'Time (s)';
+        if (analysisType === 'dc') {
+            xAxisTitle = 'Voltage (V)';
+        }
+
+        const layout = {
+            paper_bgcolor: '#0d1b2a',
+            plot_bgcolor: '#0d1b2a',
+            font: { color: '#e2e8f0' },
+            xaxis: {
+                title: xAxisTitle,
                 gridcolor: '#1f2937',
                 zerolinecolor: '#1f2937'
             },
@@ -1154,6 +1496,7 @@ class CircuitEditorApp {
                 meta: comp.meta
             })),
             wires: this.wireGraph.toJSON(),
+            probes: this.probeManager.toJSON(),
             simulation: this.simulationDirectives,
             counters: {
                 component: this._componentCounter,
@@ -1167,6 +1510,7 @@ class CircuitEditorApp {
         this.componentManager.components = [];
         this.componentManager.pinNodeIdsByComponent.clear();
         this.wireGraph.clear();
+        this.probeManager.clear();
         this.simulationDirectives = [];
         
         // Restore wires first
@@ -1191,6 +1535,11 @@ class CircuitEditorApp {
                 this.componentManager.components.push(component);
                 this.componentManager._registerComponentPins(component);
             }
+        }
+        
+        // Restore probes
+        if (data.probes) {
+            this.probeManager.fromJSON(data.probes);
         }
         
         // Restore counters

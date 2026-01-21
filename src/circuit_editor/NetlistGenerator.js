@@ -6,11 +6,21 @@ export class NetlistGenerator {
     /**
      * @param {import('./ComponentManager.js').ComponentManager} componentManager
      * @param {import('./WireGraph.js').WireGraph} wireGraph
+     * @param {import('./ProbeManager.js').ProbeManager} [probeManager]
      */
-    constructor(componentManager, wireGraph) {
+    constructor(componentManager, wireGraph, probeManager = null) {
         this.componentManager = componentManager;
         this.wireGraph = wireGraph;
+        this.probeManager = probeManager;
         this.simulationDirectives = []; // Will be set by the app
+    }
+
+    /**
+     * Set the probe manager reference
+     * @param {import('./ProbeManager.js').ProbeManager} probeManager
+     */
+    setProbeManager(probeManager) {
+        this.probeManager = probeManager;
     }
 
     /**
@@ -29,7 +39,7 @@ export class NetlistGenerator {
      * Generate netlist and return accompanying metadata
      * @param {Array} [customDirectives]
      * @param {Object} [options]
-     * @returns {{ netlist: string, netMap: Map<number, string>, netNames: string[] }}
+     * @returns {{ netlist: string, netMap: Map<number, string>, netNames: string[], probeInfo: Array<{label: string, node: string}>, analysisType: string }}
      */
     generateWithMetadata(customDirectives = null, options = {}) {
         const { includeControlBlock = false, controlSignals = null } = options;
@@ -61,19 +71,36 @@ export class NetlistGenerator {
             lines.push('');
         }
 
-        // Add simulation commands
+        // Add simulation commands and detect analysis type
         const directives = customDirectives || this.simulationDirectives;
+        let analysisType = 'op'; // default
         if (directives && directives.length > 0) {
             lines.push('* Simulation');
-            directives.forEach(dir => lines.push(dir.text || dir));
+            directives.forEach(dir => {
+                const text = dir.text || dir;
+                lines.push(text);
+                // Detect analysis type from directive
+                if (text.toLowerCase().startsWith('.ac')) analysisType = 'ac';
+                else if (text.toLowerCase().startsWith('.tran')) analysisType = 'tran';
+                else if (text.toLowerCase().startsWith('.dc')) analysisType = 'dc';
+                else if (text.toLowerCase().startsWith('.op')) analysisType = 'op';
+            });
         } else {
             // Default to operating point if no directives specified
             lines.push('* Simulation');
             lines.push('.op');
         }
 
+        // Refresh probe connections before building probe info
+        if (this.probeManager) {
+            this.probeManager.refreshConnections();
+        }
+        
+        // Build probe info and signals for wrdata
+        const probeInfo = this._buildProbeInfo(netMap);
+        
         if (includeControlBlock) {
-            const signals = this._resolveControlSignals(controlSignals, netNames);
+            const signals = this._resolveControlSignals(controlSignals, netNames, probeInfo);
             lines.push('.control');
             lines.push('set filetype=ascii');
             lines.push('run');
@@ -89,8 +116,40 @@ export class NetlistGenerator {
         return {
             netlist: lines.join('\n'),
             netMap,
-            netNames
+            netNames,
+            probeInfo,
+            analysisType
         };
+    }
+
+    /**
+     * Build probe information array mapping probe labels to net names
+     * @param {Map<number, string>} netMap
+     * @returns {Array<{label: string, node: string, nodeId: number, color: string}>}
+     */
+    _buildProbeInfo(netMap) {
+        if (!this.probeManager) return [];
+        
+        const probeData = this.probeManager.getProbeData();
+        const probeInfo = [];
+        
+        for (const probe of probeData) {
+            if (probe.nodeId !== null) {
+                const netName = netMap.get(probe.nodeId);
+                if (netName) {
+                    // Include all probes, even ground (will show 0V)
+                    probeInfo.push({
+                        label: probe.label,
+                        node: netName,
+                        nodeId: probe.nodeId,
+                        isGround: netName === '0',
+                        color: probe.color || '#3b82f6'
+                    });
+                }
+            }
+        }
+        
+        return probeInfo;
     }
 
     /**
@@ -320,15 +379,34 @@ export class NetlistGenerator {
         return Array.from(models);
     }
 
-    _resolveControlSignals(controlSignals, netNames) {
+    /**
+     * Resolve control signals for wrdata command
+     * Prioritizes probe-specified nodes, falls back to all nets if no probes
+     * Excludes ground (node 0) since v(0) is not a valid SPICE vector
+     * @param {string[] | null} controlSignals - Explicit signals if provided
+     * @param {string[]} netNames - All available net names
+     * @param {Array<{label: string, node: string, isGround?: boolean}>} probeInfo - Probe information
+     * @returns {string[]}
+     */
+    _resolveControlSignals(controlSignals, netNames, probeInfo = []) {
+        // If explicit signals provided, use them
         if (Array.isArray(controlSignals) && controlSignals.length > 0) {
             return controlSignals
                 .map(signal => signal?.trim())
                 .filter(Boolean);
         }
 
-        if (netNames.length === 0) return [];
+        // If probes are placed, only output probed nodes (excluding ground)
+        if (probeInfo && probeInfo.length > 0) {
+            return probeInfo
+                .filter(probe => !probe.isGround && probe.node !== '0')
+                .map(probe => `v(${probe.node})`);
+        }
 
-        return netNames.map(name => `v(${name})`);
+        // Fall back to all nets if no probes (excluding ground)
+        if (netNames.length === 0) return [];
+        return netNames
+            .filter(name => name !== '0')
+            .map(name => `v(${name})`);
     }
 }

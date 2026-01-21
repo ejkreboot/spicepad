@@ -51,6 +51,28 @@ export class ComponentManager {
 		this._registerComponentPins(component);
 		this.viewport.render();
 	}
+	
+	/**
+	 * Remove a component by ID and unregister its pins from the wire graph
+	 * @param {string} componentId
+	 */
+	removeComponent(componentId) {
+		const index = this.components.findIndex(c => c.id === componentId);
+		if (index === -1) return;
+		
+		// Unregister pins from wire graph
+		const pinMap = this.pinNodeIdsByComponent.get(componentId);
+		if (pinMap) {
+			for (const nodeId of pinMap.values()) {
+				this.wireGraph.removeNode(nodeId);
+			}
+			this.pinNodeIdsByComponent.delete(componentId);
+		}
+		
+		// Remove from components array
+		this.components.splice(index, 1);
+		this.selectedComponentIds.delete(componentId);
+	}
     
 	/**
 	 * Convenience: add a basic square component
