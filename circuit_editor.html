@@ -87,6 +87,7 @@
                         <button class="btn btn-secondary btn-small" id="sim-run-btn" title="Run Simulation (⌘↵)">
                             <span class="material-symbols-outlined">play_arrow</span>
                             Run
+                            <kbd class="kbd-hint">⌘↵</kbd>
                         </button>
                     </div>
                     <div class="results-status">
@@ -279,13 +280,21 @@
                     <label for="component-label-input">Label</label>
                     <input type="text" id="component-label-input" />
                 </div>
+                <div class="modal-field" id="component-model-field">
+                    <label for="component-model-select">Model</label>
+                    <select id="component-model-select"></select>
+                </div>
                 <div class="modal-field" id="component-value-field">
                     <label for="component-value-input">Value</label>
                     <input type="text" id="component-value-input" />
                 </div>
                 <div class="modal-field">
-                    <label for="component-spice-input">Spice Model (optional)</label>
-                    <input type="text" id="component-spice-input" placeholder=".model ..." />
+                    <label for="component-custom-model-input">Custom Model Statement (optional)</label>
+                    <textarea id="component-custom-model-input" rows="3" placeholder=".model ..."></textarea>
+                </div>
+                <div class="modal-field">
+                    <label for="component-spice-input">Spice Value / Params (optional)</label>
+                    <input type="text" id="component-spice-input" placeholder="AC 1, SIN(...), model params" />
                 </div>
             </div>
             <div class="modal-actions">

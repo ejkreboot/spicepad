@@ -9,6 +9,7 @@ import { deleteSymbol as deleteSymbolFromStore, loadLibrary, replaceLibrary, sav
         let mode = 'select';
         let elements = []; // Drawing elements for current component
         let pins = []; // Pins for current component
+        let models = []; // SPICE model statements for current component
         let selectedElement = null;
         let selectedElements = new Set(); // Multiple selected elements
         let isDrawing = false;
@@ -246,7 +247,7 @@ import { deleteSymbol as deleteSymbolFromStore, loadLibrary, replaceLibrary, sav
             const capacitorSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 60" data-generated-by="symbol-editor" data-comp-width="80" data-comp-height="40" data-offset-x="20" data-offset-y="10"><g fill="none" stroke="#000000" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><path d="M 20 30 L 50 30"/><path d="M 50 15 L 50 45"/><path d="M 70 15 L 70 45"/><path d="M 70 30 L 100 30"/></g></svg>`;
             const groundSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 90 90" data-generated-by="symbol-editor" data-comp-width="60" data-comp-height="60" data-offset-x="15" data-offset-y="15"><g fill="none" stroke="#000000" stroke-width="4" stroke-linecap="round"><path d="M 45 15 L 45 45"/><path d="M 25 45 L 65 45"/><path d="M 30 55 L 60 55"/><path d="M 35 65 L 55 65"/></g></svg>`;
 
-            return {
+            const library = {
                 resistor: {
                     name: 'Resistor',
                     description: 'Standard two-pin resistor symbol',
@@ -296,17 +297,22 @@ import { deleteSymbol as deleteSymbolFromStore, loadLibrary, replaceLibrary, sav
                     svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 90 75" data-generated-by="symbol-editor" data-comp-width="60" data-comp-height="50" data-offset-x="15" data-offset-y="13"><path fill="none" stroke="#000000" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" d="M 45 13 L 45 43"/><path fill="none" stroke="#000000" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" d="M 25 43 L 65 43"/><path fill="none" stroke="#000000" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" d="M 33 53 L 58 53"/><path fill="none" stroke="#000000" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" d="M 41 63 L 49 63"/></svg>`
                 }
             };
+
+            normalizeModelFields(library);
+            return library;
         }
 
         function applyComponentsToState(nextComponents) {
             components = nextComponents || {};
-            stripModelFields(components);
+            normalizeModelFields(components);
             dirtyComponents.clear();
             currentComponentId = null;
             isNewComponentDraft = false;
 
             updateComponentList();
             updateJSON();
+            models = [];
+            updateModelList();
             const defaultWidth = parseInt(document.getElementById('compWidth').value, 10) || 80;
             const defaultHeight = parseInt(document.getElementById('compHeight').value, 10) || 40;
             setLabelInputs(getDefaultLabelPositions(defaultWidth, defaultHeight), defaultWidth, defaultHeight);
@@ -2238,12 +2244,137 @@ import { deleteSymbol as deleteSymbolFromStore, loadLibrary, replaceLibrary, sav
             };
         }
 
-        function stripModelFields(map) {
+        function escapeHtml(value) {
+            if (value === undefined || value === null) return '';
+            return String(value)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
+        }
+
+        // Model management
+        let expandedModelIndex = null; // Track which model is expanded
+
+        function updateModelList() {
+            const container = document.getElementById('modelList');
+            if (!container) return;
+            if (!Array.isArray(models)) models = [];
+
+            if (models.length === 0) {
+                container.innerHTML = '<div class="model-empty">No model statements</div>';
+                return;
+            }
+
+            container.innerHTML = models.map((entry, idx) => {
+                const isExpanded = expandedModelIndex === idx;
+                const modelName = escapeHtml(entry?.name || `Model ${idx + 1}`);
+                const modelStatement = escapeHtml(entry?.model || '');
+                
+                return `
+                <div class="model-item ${isExpanded ? 'model-item-expanded' : ''}">
+                    <div class="model-header" onclick="toggleModel(${idx})">
+                        <div class="model-header-left">
+                            <span class="model-expand-icon">${isExpanded ? '▼' : '▶'}</span>
+                            <span class="model-name-display">${modelName}</span>
+                        </div>
+                        <div class="model-actions" onclick="event.stopPropagation()">
+                            <button class="btn btn-danger small-btn" onclick="removeModel(${idx})" title="Remove">×</button>
+                        </div>
+                    </div>
+                    ${isExpanded ? `
+                    <div class="model-details">
+                        <div class="model-field">
+                            <label>Name:</label>
+                            <input type="text" value="${escapeHtml(entry?.name || '')}" placeholder="Model name" onchange="updateModelField(${idx}, 'name', this.value)">
+                        </div>
+                        <div class="model-field">
+                            <label>Statement:</label>
+                            <textarea rows="3" placeholder=".model NAME TYPE (params)" onchange="updateModelField(${idx}, 'model', this.value)">${modelStatement}</textarea>
+                        </div>
+                    </div>
+                    ` : ''}
+                </div>
+            `;
+            }).join('');
+        }
+
+        function toggleModel(index) {
+            // Toggle: if clicking the same model, collapse it; otherwise expand the new one
+            expandedModelIndex = expandedModelIndex === index ? null : index;
+            updateModelList();
+        }
+
+        function addModel() {
+            const nextIndex = models.length + 1;
+            models.push({ name: `MODEL${nextIndex}`, model: '' });
+            expandedModelIndex = models.length - 1; // Auto-expand the new model
+            updateModelList();
+            markCurrentComponentDirty();
+        }
+
+        function duplicateModel(index) {
+            const entry = models[index];
+            if (!entry) return;
+            const copyName = entry.name ? `${entry.name}_copy` : `MODEL${models.length + 1}`;
+            models.splice(index + 1, 0, { name: copyName, model: entry.model || '' });
+            expandedModelIndex = index + 1; // Auto-expand the duplicated model
+            updateModelList();
+            markCurrentComponentDirty();
+        }
+
+        function removeModel(index) {
+            if (index < 0 || index >= models.length) return;
+            models.splice(index, 1);
+            updateModelList();
+            markCurrentComponentDirty();
+        }
+
+        function updateModelField(index, field, value) {
+            const entry = models[index];
+            if (!entry) return;
+            if (field === 'name') {
+                entry.name = value;
+            } else if (field === 'model') {
+                entry.model = value;
+            }
+            markCurrentComponentDirty();
+        }
+
+        function extractModelName(statement = '') {
+            if (typeof statement !== 'string') return '';
+            const match = statement.match(/\.model\s+([^\s]+)/i);
+            return match ? match[1] : '';
+        }
+
+        function normalizeModelsArray(source) {
+            const items = [];
+            if (Array.isArray(source)) {
+                items.push(...source);
+            } else if (typeof source === 'string') {
+                items.push({ model: source });
+            } else if (source && typeof source === 'object' && typeof source.model === 'string') {
+                items.push(source);
+            }
+
+            return items
+                .map((entry, index) => {
+                    const modelText = typeof entry?.model === 'string' ? entry.model.trim() : '';
+                    if (!modelText) return null;
+                    const providedName = typeof entry?.name === 'string' ? entry.name.trim() : '';
+                    const name = providedName || extractModelName(modelText) || `MODEL${index + 1}`;
+                    return { name, model: modelText };
+                })
+                .filter(Boolean);
+        }
+
+        function normalizeModelFields(map) {
             if (!map || typeof map !== 'object') return;
             Object.values(map).forEach(comp => {
-                if (comp && typeof comp === 'object' && 'model' in comp) {
-                    delete comp.model;
-                }
+                if (!comp || typeof comp !== 'object') return;
+                const normalized = normalizeModelsArray(comp.models ?? comp.model ?? []);
+                comp.models = normalized;
+                if ('model' in comp) delete comp.model;
             });
         }
 
@@ -2302,12 +2433,14 @@ import { deleteSymbol as deleteSymbolFromStore, loadLibrary, replaceLibrary, sav
             pins = normalizePins(comp.pins);
             elements = parseSVGToElements(comp.svg);
             setLabelInputs(comp.labels, compWidthValue, compHeightValue);
+            models = normalizeModelsArray(comp.models ?? comp.model ?? []);
             selectedElement = null;
             selectedElements.clear();
             resetArcConstruction();
 
             updateComponentList();
             updatePinList();
+            updateModelList();
             updateElementList();
             resizeCanvas(); // Ensure canvas dimensions are recalculated
             requestLabelPreviewUpdate({ immediate: true });
@@ -2613,6 +2746,8 @@ import { deleteSymbol as deleteSymbolFromStore, loadLibrary, replaceLibrary, sav
             const compHeight = parseInt(document.getElementById('compHeight').value) || 40;
             const labels = readLabelInputs(compWidth, compHeight);
 
+            const normalizedModels = normalizeModelsArray(models);
+
             const prefixValue = document.getElementById('compPrefix').value || id[0].toUpperCase();
             const defaultField = document.getElementById('compDefault');
             const defaultValue = defaultValueIsNull ? null : (defaultField ? defaultField.value : '');
@@ -2629,6 +2764,7 @@ import { deleteSymbol as deleteSymbolFromStore, loadLibrary, replaceLibrary, sav
                     width: compWidth,
                     height: compHeight
                 },
+                models: normalizedModels,
                 pins: pins.map(p => {
                     const label = ensurePinLabelPosition(p);
                     return {
@@ -2678,6 +2814,7 @@ import { deleteSymbol as deleteSymbolFromStore, loadLibrary, replaceLibrary, sav
             isNewComponentDraft = true;
             elements = [];
             pins = [];
+            models = [];
             selectedElement = null;
             resetArcConstruction();
 
@@ -2696,6 +2833,7 @@ import { deleteSymbol as deleteSymbolFromStore, loadLibrary, replaceLibrary, sav
 
             updateComponentList();
             updatePinList();
+            updateModelList();
             updateElementList();
             resizeCanvas(); // Ensure canvas is properly sized
             requestLabelPreviewUpdate({ immediate: true });
@@ -2745,7 +2883,7 @@ import { deleteSymbol as deleteSymbolFromStore, loadLibrary, replaceLibrary, sav
 
         // JSON handling
         function updateJSON() {
-            stripModelFields(components);
+            normalizeModelFields(components);
             document.getElementById('jsonOutput').value = JSON.stringify(components, null, '\t');
         }
 
@@ -2791,7 +2929,7 @@ import { deleteSymbol as deleteSymbolFromStore, loadLibrary, replaceLibrary, sav
             reader.onload = async function (e) {
                 try {
                     components = JSON.parse(e.target.result);
-                    stripModelFields(components);
+                    normalizeModelFields(components);
                     currentComponentId = null;
                     dirtyComponents.clear();
                     try {
@@ -2812,22 +2950,27 @@ import { deleteSymbol as deleteSymbolFromStore, loadLibrary, replaceLibrary, sav
 
         const symbolEditorGlobals = {
             addPinManual,
+            addModel,
             clearDrawing,
             copyJSON,
             deleteComponent,
             deleteSelected,
             downloadJSON,
             duplicateComponent,
+            duplicateModel,
             loadComponent,
             loadFromFile,
             newComponent,
             newJSON,
             removeElement,
             removePin,
+            removeModel,
             resizeCanvas,
             selectElement,
             setMode,
+            toggleModel,
             updateComponent,
+            updateModelField,
             updatePin,
             updateSelectedStroke,
         };

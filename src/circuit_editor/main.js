@@ -506,16 +506,40 @@ class CircuitEditorApp {
         }
     }
 
+    _normalizeDefinitionModels(definition) {
+        const list = Array.isArray(definition?.models) ? definition.models : [];
+        return list
+            .map((entry, index) => {
+                const modelText = typeof entry?.model === 'string' ? entry.model.trim() : '';
+                if (!modelText) return null;
+                const name = (typeof entry?.name === 'string' && entry.name.trim())
+                    ? entry.name.trim()
+                    : this._extractModelName(modelText) || `Model ${index + 1}`;
+                return { name, model: modelText };
+            })
+            .filter(Boolean);
+    }
+
+    _extractModelName(statement = '') {
+        if (typeof statement !== 'string') return '';
+        const match = statement.match(/\.model\s+([^\s]+)/i);
+        return match ? match[1] : '';
+    }
+
     _openComponentModal(component) {
         const overlay = document.getElementById('component-modal');
         const labelInput = document.getElementById('component-label-input');
+        const modelField = document.getElementById('component-model-field');
+        const modelSelect = document.getElementById('component-model-select');
         const valueField = document.getElementById('component-value-field');
         const valueInput = document.getElementById('component-value-input');
+        const customModelInput = document.getElementById('component-custom-model-input');
         const spiceInput = document.getElementById('component-spice-input');
 
-        if (!overlay || !labelInput || !valueField || !valueInput || !spiceInput) return;
+        if (!overlay || !labelInput || !modelField || !modelSelect || !valueField || !valueInput || !customModelInput || !spiceInput) return;
 
         const definition = component.meta?.definition;
+        const models = this._normalizeDefinitionModels(definition);
         const defaultValue = definition?.defaultValue;
         const hasValue =
             component.meta?.valueText !== null &&
@@ -523,7 +547,38 @@ class CircuitEditorApp {
             (defaultValue !== null && defaultValue !== undefined);
 
         labelInput.value = component.meta?.designatorText ?? component.name ?? component.id ?? '';
-        spiceInput.value = component.meta?.spiceModel ?? '';
+
+        if (models.length > 0) {
+            modelField.style.display = 'flex';
+            modelSelect.innerHTML = '';
+            models.forEach(entry => {
+                const option = document.createElement('option');
+                option.value = entry.name;
+                option.textContent = entry.name;
+                modelSelect.appendChild(option);
+            });
+            const preferred = component.meta?.selectedModelName;
+            const fallback = models[0]?.name;
+            if (preferred && models.some(m => m.name === preferred)) {
+                modelSelect.value = preferred;
+            } else if (fallback) {
+                modelSelect.value = fallback;
+            }
+        } else {
+            modelField.style.display = 'none';
+            modelSelect.innerHTML = '';
+        }
+
+        const customModel = component.meta?.customModelStatement?.trim() ||
+            (typeof component.meta?.spiceModel === 'string' && component.meta.spiceModel.trim().toLowerCase().startsWith('.model')
+                ? component.meta.spiceModel.trim()
+                : '');
+        customModelInput.value = customModel;
+
+        const spiceOverride = typeof component.meta?.spiceModel === 'string' && !component.meta.spiceModel.trim().toLowerCase().startsWith('.model')
+            ? component.meta.spiceModel.trim()
+            : '';
+        spiceInput.value = spiceOverride;
 
         if (hasValue) {
             valueField.style.display = 'flex';
@@ -560,24 +615,43 @@ class CircuitEditorApp {
         }
 
         const labelInput = document.getElementById('component-label-input');
+        const modelField = document.getElementById('component-model-field');
+        const modelSelect = document.getElementById('component-model-select');
         const valueField = document.getElementById('component-value-field');
         const valueInput = document.getElementById('component-value-input');
+        const customModelInput = document.getElementById('component-custom-model-input');
         const spiceInput = document.getElementById('component-spice-input');
 
-        if (!labelInput || !valueField || !valueInput || !spiceInput) {
+        if (!labelInput || !modelField || !modelSelect || !valueField || !valueInput || !customModelInput || !spiceInput) {
             this._closeComponentModal();
             return;
         }
 
         const label = labelInput.value.trim();
         const value = valueInput.value.trim();
+        const customModel = customModelInput.value.trim();
         const spice = spiceInput.value.trim();
+
+        const models = this._normalizeDefinitionModels(this._editingComponent.meta?.definition);
+        if (models.length > 0 && modelField.style.display !== 'none') {
+            const selectedName = modelSelect.value || models[0]?.name || null;
+            this._editingComponent.meta.selectedModelName = selectedName || null;
+        } else {
+            this._editingComponent.meta.selectedModelName = null;
+        }
 
         this._editingComponent.meta.designatorText = label;
         if (valueField.style.display !== 'none') {
             this._editingComponent.meta.valueText = value;
         }
-        this._editingComponent.meta.spiceModel = spice || null;
+        const customModelStatement = customModel.toLowerCase().startsWith('.model') ? customModel : '';
+        const spiceIsModel = spice.toLowerCase().startsWith('.model');
+        const spiceParams = !spiceIsModel ? spice : '';
+        const modelStatementFromSpice = spiceIsModel ? spice : '';
+        const finalModelStatement = customModelStatement || modelStatementFromSpice;
+
+        this._editingComponent.meta.customModelStatement = finalModelStatement || null;
+        this._editingComponent.meta.spiceModel = spiceParams || null;
 
         this.viewport.render();
         this._closeComponentModal();
@@ -1325,16 +1399,36 @@ class CircuitEditorApp {
             <div class="plot-scale-toggle">
                 <button class="scale-btn active" data-scale="db">dB</button>
                 <button class="scale-btn" data-scale="v">V</button>
+                <button class="scale-btn" data-scale="phase">Phase</button>
             </div>
         ` : '';
         
         container.innerHTML = `
             <div class="plot-header">
                 <div class="plot-title">${titleText}</div>
-                ${scaleToggle}
+                <div class="plot-actions">
+                    ${scaleToggle}
+                    <button class="plot-export-btn" title="Download as PNG">
+                        <span class="material-symbols-outlined">download</span>
+                    </button>
+                </div>
             </div>
             <div class="plot-area" id="plot-area-${id}"></div>
         `;
+        
+        // Setup export button
+        const exportBtn = container.querySelector('.plot-export-btn');
+        exportBtn?.addEventListener('click', () => {
+            const plotAreaEl = container.querySelector('.plot-area');
+            if (plotAreaEl && window.Plotly) {
+                window.Plotly.downloadImage(plotAreaEl, {
+                    format: 'png',
+                    width: 800,
+                    height: 400,
+                    filename: `spicepad-${analysisType}-${Date.now()}`
+                });
+            }
+        });
         
         this.spicePlotsEl.appendChild(container);
         return container.querySelector('.plot-area');
@@ -1359,10 +1453,6 @@ class CircuitEditorApp {
      * @param {string} analysisType - Type of analysis ('ac', 'tran', 'dc', 'op')
      */
     _plotResults(data, probeInfo = [], analysisType = 'tran') {
-        console.log('[_plotResults] Called with analysisType:', analysisType);
-        console.log('[_plotResults] spicePlotsEl:', this.spicePlotsEl);
-        console.log('[_plotResults] data length:', data?.length);
-        
         if (!this.spicePlotsEl) return;
         if (!data || !data.trim()) return;
         if (!window.Plotly) {
@@ -1376,9 +1466,6 @@ class CircuitEditorApp {
             if (l.includes('Index') || l.toLowerCase().includes('time')) return false;
             return true;
         });
-
-        console.log('[_plotResults] filtered lines count:', lines.length);
-        console.log('[_plotResults] first few lines:', lines.slice(0, 3));
 
         if (lines.length === 0) {
             this._appendRunOutput('[note] No plottable data found');
@@ -1416,9 +1503,6 @@ class CircuitEditorApp {
         }
         const firstParts = firstLine.trim().split(/\s+/);
         const numSignals = Math.floor(firstParts.length / colsPerSignal);
-        
-        console.log('[AC Plot] First line parts:', firstParts.length, 'Num signals:', numSignals);
-        console.log('[AC Plot] probeInfo:', probeInfo);
         
         if (numSignals === 0) {
             this._appendRunOutput('[note] Invalid AC data format');
@@ -1498,15 +1582,29 @@ class CircuitEditorApp {
      */
     _renderAcPlot(plotArea, validSignals, colors, scale) {
         const isDb = scale === 'db';
+        const isPhase = scale === 'phase';
+        
+        let yData, yLabel, traceSuffix;
+        if (isPhase) {
+            yData = sig => sig.phase;
+            yLabel = 'Phase (°)';
+            traceSuffix = '°';
+        } else if (isDb) {
+            yData = sig => sig.magnitude.map(m => 20 * Math.log10(Math.max(m, 1e-12)));
+            yLabel = 'Magnitude (dB)';
+            traceSuffix = 'dB';
+        } else {
+            yData = sig => sig.magnitude;
+            yLabel = 'Magnitude (V)';
+            traceSuffix = 'V';
+        }
         
         const traces = validSignals.map((sig, i) => ({
             x: sig.freq,
-            y: isDb 
-                ? sig.magnitude.map(m => 20 * Math.log10(Math.max(m, 1e-12)))
-                : sig.magnitude,
+            y: yData(sig),
             type: 'scatter',
             mode: 'lines',
-            name: `${sig.label} (${isDb ? 'dB' : 'V'})`,
+            name: `${sig.label} (${traceSuffix})`,
             line: { color: sig.color || colors[i % colors.length], width: 2 }
         }));
 
@@ -1525,7 +1623,7 @@ class CircuitEditorApp {
                 tickfont: { size: 9 }
             },
             yaxis: {
-                title: { text: isDb ? 'Magnitude (dB)' : 'Magnitude (V)', font: { size: 11 } },
+                title: { text: yLabel, font: { size: 11 } },
                 gridcolor: '#334155',
                 zerolinecolor: '#334155',
                 linecolor: '#475569',

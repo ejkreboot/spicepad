@@ -302,41 +302,44 @@ export class NetlistGenerator {
         
         if (!spiceType) return null;
 
+        const modelInfo = this._resolveModelInfo(component);
+
         // Format: [designator] [node1] [node2] ... [value/model]
         let line = `${designator} ${netNames.join(' ')}`;
 
-        // Add value or model based on component type
-        if (component.meta?.spiceModel) {
-            // User provided custom SPICE model/parameters
-            line += ` ${component.meta.spiceModel}`;
-        } else {
-            // Use appropriate default based on component type
-            switch (spiceType) {
-                case 'voltage':
-                    // Voltage sources need DC/AC specification
-                    line += value ? ` ${value}` : ' DC 0';
-                    break;
-                case 'current':
-                    // Current sources
-                    line += value ? ` ${value}` : ' DC 0';
-                    break;
-                case 'diode':
-                case 'bjt':
-                case 'mosfet':
-                case 'jfet':
-                    // Semiconductor devices need model names
-                    const modelName = value || `${designator}_MODEL`;
-                    line += ` ${modelName}`;
-                    break;
-                case 'resistor':
-                case 'capacitor':
-                case 'inductor':
-                    // Passive components just need value
-                    line += value ? ` ${value}` : ' 1k';
-                    break;
-                default:
-                    line += value ? ` ${value}` : '';
+        // Inline overrides take precedence over defaults
+        if (modelInfo.inlineOverride) {
+            line += ` ${modelInfo.inlineOverride}`;
+            return line;
+        }
+
+        // Use appropriate default based on component type
+        switch (spiceType) {
+            case 'voltage':
+                // Voltage sources need DC/AC specification
+                line += value ? ` ${value}` : ' DC 0';
+                break;
+            case 'current':
+                // Current sources
+                line += value ? ` ${value}` : ' DC 0';
+                break;
+            case 'diode':
+            case 'bjt':
+            case 'mosfet':
+            case 'jfet': {
+                // Semiconductor devices need model names
+                const modelName = modelInfo.modelName || value || `${designator}_MODEL`;
+                line += ` ${modelName}`;
+                break;
             }
+            case 'resistor':
+            case 'capacitor':
+            case 'inductor':
+                // Passive components just need value
+                line += value ? ` ${value}` : ' 1k';
+                break;
+            default:
+                line += value ? ` ${value}` : '';
         }
 
         return line;
@@ -364,19 +367,92 @@ export class NetlistGenerator {
         return typeMap[prefix] || null;
     }
 
+    _resolveModelInfo(component) {
+        const definitionModels = Array.isArray(component.meta?.definition?.models) ? component.meta.definition.models : [];
+        const normalizedModels = definitionModels
+            .map((entry, index) => this._normalizeModelEntry(entry, index))
+            .filter(Boolean);
+
+        const selectedName = component.meta?.selectedModelName;
+        let chosenModel = null;
+        if (normalizedModels.length > 0) {
+            if (selectedName) {
+                chosenModel = normalizedModels.find(entry => entry.name === selectedName) || null;
+            }
+            if (!chosenModel) {
+                chosenModel = normalizedModels[0];
+            }
+        }
+
+        const rawSpiceModel = typeof component.meta?.spiceModel === 'string' ? component.meta.spiceModel.trim() : '';
+        const rawCustomModel = typeof component.meta?.customModelStatement === 'string' ? component.meta.customModelStatement.trim() : '';
+
+        const spiceIsModel = rawSpiceModel.toLowerCase().startsWith('.model');
+        const normalizedCustomModel = rawCustomModel.toLowerCase().startsWith('.model') ? rawCustomModel : '';
+        const customModelStatement = normalizedCustomModel || (spiceIsModel ? rawSpiceModel : '');
+        const inlineOverride = !spiceIsModel && rawSpiceModel ? rawSpiceModel : '';
+
+        if (customModelStatement) {
+            const modelName = this._extractModelName(customModelStatement) ||
+                chosenModel?.name ||
+                component.meta?.valueText ||
+                component.meta?.definition?.defaultValue ||
+                `${component.meta?.designatorText || component.name || component.id}_MODEL`;
+
+            return {
+                modelName,
+                modelStatement: customModelStatement,
+                inlineOverride: inlineOverride || null
+            };
+        }
+
+        if (chosenModel) {
+            return {
+                modelName: chosenModel.name,
+                modelStatement: chosenModel.model,
+                inlineOverride: inlineOverride || null
+            };
+        }
+
+        return {
+            modelName: null,
+            modelStatement: null,
+            inlineOverride: inlineOverride || null
+        };
+    }
+
+    _normalizeModelEntry(entry, index = 0) {
+        const modelText = typeof entry?.model === 'string' ? entry.model.trim() : '';
+        if (!modelText) return null;
+        const name = (typeof entry?.name === 'string' && entry.name.trim())
+            ? entry.name.trim()
+            : this._extractModelName(modelText) || `Model${index + 1}`;
+        return { name, model: modelText };
+    }
+
+    _extractModelName(statement = '') {
+        if (typeof statement !== 'string') return '';
+        const match = statement.match(/\.model\s+([^\s]+)/i);
+        return match ? match[1] : '';
+    }
+
     /**
      * Collect custom SPICE models from components
      * @returns {string[]}
      */
     _collectModels() {
-        const models = new Set();
+        const seen = new Set();
+        const models = [];
         for (const component of this.componentManager.components) {
-            const spiceModel = component.meta?.spiceModel;
-            if (spiceModel && spiceModel.startsWith('.model')) {
-                models.add(spiceModel);
-            }
+            const { modelStatement } = this._resolveModelInfo(component);
+            const statement = typeof modelStatement === 'string' ? modelStatement.trim() : '';
+            if (!statement || !statement.toLowerCase().startsWith('.model')) continue;
+            const normalizedKey = statement.replace(/\s+/g, ' ').toLowerCase();
+            if (seen.has(normalizedKey)) continue;
+            seen.add(normalizedKey);
+            models.push(statement);
         }
-        return Array.from(models);
+        return models;
     }
 
     /**

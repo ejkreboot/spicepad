@@ -43,6 +43,7 @@ h1 {
     align-items: stretch;
     flex: 1;
     min-height: 0;
+    height: calc(100vh - 120px);
 }
 
 /* New App Layout for Circuit Editor */
@@ -207,6 +208,12 @@ h1 {
     letter-spacing: 1px;
 }
 
+.plot-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
 .plot-scale-toggle {
     display: flex;
     gap: 2px;
@@ -234,6 +241,29 @@ h1 {
 .plot-scale-toggle .scale-btn.active {
     background: #3b82f6;
     color: #fff;
+}
+
+.plot-export-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    background: #0f172a;
+    border: none;
+    border-radius: 4px;
+    color: #64748b;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.plot-export-btn:hover {
+    background: #334155;
+    color: #e2e8f0;
+}
+
+.plot-export-btn .material-symbols-outlined {
+    font-size: 16px;
 }
 
 .plot-container .plot-area {
@@ -339,14 +369,30 @@ h1 {
     cursor: not-allowed;
 }
 
+/* Keyboard shortcut hint */
+.kbd-hint {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 5px;
+    margin-left: 4px;
+    font-size: 9px;
+    font-family: -apple-system, system-ui, sans-serif;
+    font-weight: 500;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 3px;
+    opacity: 0.8;
+}
+
 .workspace-grid {
+    --workspace-top-height: 640px;
     display: grid;
     grid-template-columns: 240px minmax(500px, 1fr);
-    grid-template-rows: minmax(0, 1fr);
+    grid-template-rows: var(--workspace-top-height) minmax(0, 1fr);
     gap: 20px;
     align-items: stretch;
     min-width: 0;
     height: 100%;
+    min-height: 0;
 }
 
 .components-panel {
@@ -354,13 +400,16 @@ h1 {
     grid-row: 1;
     min-width: 0;
     min-height: 0;
+    height: var(--workspace-top-height);
     display: flex;
     flex-direction: column;
+    overflow: hidden;
 }
 
 .canvas-panel {
     grid-column: 2;
     grid-row: 1;
+    height: var(--workspace-top-height);
 }
 
 .panel {
@@ -380,7 +429,11 @@ h1 {
     font-weight: 600;
 }
 
-.components-panel .json-header { padding-top: 16px; }
+.components-panel .json-header {
+    padding-top: 8px;
+    margin-top: 12px;
+    margin-bottom: 6px;
+}
 
 /* Component list */
 .component-list {
@@ -390,6 +443,9 @@ h1 {
     overflow-y: auto;
     flex: 1;
     min-height: 0;
+    border: 1px solid #e5e5e5;
+    border-radius: 8px;
+    padding: 8px;
 }
 
 .component-item {
@@ -611,8 +667,9 @@ h1 {
     display: flex;
     flex-direction: column;
     gap: 16px;
-    min-height: 600px;
-    max-height: 600px;
+    height: 100%;
+    min-height: 0;
+    max-height: none;
     overflow: hidden;
 }
 
@@ -831,6 +888,25 @@ canvas {
     border-color: #10b981;
 }
 
+.prop-row textarea {
+    flex: 1;
+    min-height: 64px;
+    padding: 6px 10px;
+    border: 1px solid #e5e5e5;
+    border-radius: 4px;
+    background: #fff;
+    color: #222;
+    font-size: 12px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif;
+    transition: border-color 0.2s;
+    resize: vertical;
+}
+
+.prop-row textarea:focus {
+    outline: none;
+    border-color: #10b981;
+}
+
 .prop-row input[type="checkbox"] { width: 16px; height: 16px; }
 
 .pin-list,
@@ -853,6 +929,154 @@ canvas {
 .element-item.selected {
     border: 2px solid #10b981;
     background: #f0fdf4;
+}
+
+.model-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.model-item {
+    background: #fff;
+    border-radius: 4px;
+    font-size: 11px;
+    border: 1px solid #e5e5e5;
+    transition: all 0.2s ease;
+}
+
+.model-item-expanded {
+    border-color: #3b82f6;
+    box-shadow: 0 1px 3px rgba(59, 130, 246, 0.1);
+}
+
+.model-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px;
+    font-size: 11px;
+    cursor: pointer;
+    user-select: none;
+    transition: background-color 0.15s ease;
+}
+
+.model-header:hover {
+    background-color: #f9fafb;
+}
+
+.model-item-expanded .model-header {
+    border-bottom: 1px solid #e5e5e5;
+    background-color: #f9fafb;
+}
+
+.model-header-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+}
+
+.model-expand-icon {
+    color: #9ca3af;
+    font-size: 9px;
+    width: 10px;
+    flex-shrink: 0;
+    transition: transform 0.2s ease;
+}
+
+.model-name-display {
+    font-weight: 600;
+    color: #111;
+    flex-shrink: 0;
+}
+
+.model-preview {
+    color: #6b7280;
+    font-size: 10px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin-left: 8px;
+}
+
+.model-details {
+    padding: 8px;
+    padding-top: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.model-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.model-field label {
+    font-size: 11px;
+    color: #666;
+    font-weight: 500;
+}
+
+.model-field input[type="text"],
+.model-field textarea {
+    width: 100%;
+    padding: 6px 8px;
+    border: 1px solid #e5e5e5;
+    border-radius: 4px;
+    font-size: 11px;
+    font-family: 'Courier New', monospace;
+}
+
+.model-field input[type="text"]:focus,
+.model-field textarea:focus {
+    outline: none;
+    border-color: #3b82f6;
+}
+
+.model-actions {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.model-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    min-width: 0;
+}
+
+.model-row label {
+    min-width: 70px;
+    flex-shrink: 0;
+}
+
+.model-row input[type="text"],
+.model-row textarea {
+    flex: 1;
+    min-width: 0;
+}
+
+.model-text-row {
+    align-items: flex-start;
+}
+
+.model-text-row label {
+    padding-top: 6px;
+}
+
+.model-empty {
+    border: 1px dashed #e5e5e5;
+    border-radius: 4px;
+    padding: 8px;
+    font-size: 11px;
+    color: #999;
+    background: #fafafa;
 }
 
 .pin-header,
@@ -905,15 +1129,18 @@ canvas {
 .json-output {
     grid-column: 1 / span 2;
     margin-top: 0;
-    min-height: 100%;
-    max-height: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-height: 0;
 }
 
 .json-output h2 { display: flex; justify-content: space-between; align-items: center; }
 
 #jsonOutput {
     width: 100%;
-    height: 420px;
+    flex: 1;
+    min-height: 0;
     background: #fff;
     border: 1px solid #e5e5e5;
     border-radius: 6px;
@@ -921,7 +1148,7 @@ canvas {
     font-family: 'SF Mono', 'Monaco', 'Cascadia Code', 'Courier New', monospace;
     font-size: 12px;
     padding: 10px;
-    resize: vertical;
+    resize: none;
 }
 
 /* Mode indicators */
