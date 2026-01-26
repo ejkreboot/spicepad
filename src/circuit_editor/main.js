@@ -16,7 +16,7 @@ import { ComponentManager } from './ComponentManager.js';
 import { SelectionManager } from './SelectionManager.js';
 import { NetlistGenerator } from './NetlistGenerator.js';
 import { ProbeManager } from './ProbeManager.js';
-import { loadLibrary } from '../common/storage/library.js';
+import { loadLibrary, replaceLibrary } from '../common/storage/library.js';
 import { DEFAULT_COMPONENT_LIBRARY } from '../common/defaultComponents.js';
 import { createComponentFromDefinition, Component } from './Component.js';
 
@@ -59,6 +59,7 @@ class CircuitEditorApp {
         this._editingComponent = null;
         this._autoSaveInterval = null;
         this._currentTool = 'select'; // Track current tool: 'select', 'wire', 'probe'
+        this._plotCounter = 0; // Unique plot IDs
         
         // Simulation directives
         this.simulationDirectives = [];
@@ -92,6 +93,9 @@ class CircuitEditorApp {
         
         // Save/Load functionality
         this._setupSaveLoad();
+
+        // Library import/export
+        this._setupLibraryImport();
 
         // Load component library
         this._loadComponentLibrary();
@@ -184,6 +188,53 @@ class CircuitEditorApp {
         }
     }
 
+    _setupLibraryImport() {
+        const importBtn = document.getElementById('import-library-btn');
+        const fileInput = document.getElementById('library-file-input');
+        importBtn?.addEventListener('click', () => fileInput?.click());
+        fileInput?.addEventListener('change', (event) => this._importLibraryFromFile(event));
+    }
+
+    async _importLibraryFromFile(event) {
+        const inputEl = event?.target;
+        const file = inputEl?.files?.[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+            try {
+                const parsed = JSON.parse(e.target.result);
+                if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                    throw new Error('Library JSON must be an object map of components');
+                }
+
+                this.componentLibrary = parsed;
+                this._ghostComponent = null;
+                this._ghostDefinitionId = null;
+                this._ghostDefinition = null;
+
+                await replaceLibrary(parsed);
+
+                this._renderComponentPanel();
+                const firstId = Object.keys(parsed)[0] ?? null;
+                if (firstId) {
+                    this._setSelectedComponent(firstId);
+                } else {
+                    this._clearSelection();
+                }
+
+                alert('Symbol library imported. New components are available in the panel.');
+            } catch (error) {
+                console.error('Failed to import library', error);
+                alert('Failed to import library. Please choose a JSON exported from the Symbol Editor.');
+            } finally {
+                if (inputEl) inputEl.value = '';
+            }
+        };
+
+        reader.readAsText(file);
+    }
+
     _renderComponentPanel() {
         const list = document.getElementById('componentList');
         if (!list) return;
@@ -214,14 +265,11 @@ class CircuitEditorApp {
             const item = document.createElement('div');
             item.className = 'component-item';
             item.dataset.componentId = id;
+            item.title = definition.name || id; // Tooltip on hover
 
             const svgMarkup = definition.svg ?? '';
             item.innerHTML = `
                 <div class="component-thumb">${svgMarkup}</div>
-                <div class="component-meta">
-                    <div class="component-name">${definition.name || id}</div>
-                    <div class="component-desc">${definition.description || ''}</div>
-                </div>
             `;
 
             item.addEventListener('click', () => {
@@ -292,10 +340,18 @@ class CircuitEditorApp {
     
     _setupKeyboard() {
         document.addEventListener('keydown', (event) => {
-            if (this._modalOpen && event.key === 'Escape') {
-                this._closeComponentModal();
+            const isFormField = ['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target?.tagName) || event.target?.isContentEditable;
+
+            // If any modal is open, only allow Escape to close the component modal; let other keys through to inputs.
+            if (this._modalOpen) {
+                if (event.key === 'Escape') {
+                    this._closeComponentModal();
+                }
                 return;
             }
+
+            // When typing in inputs outside modals, avoid stealing keys like Delete/Backspace.
+            if (isFormField) return;
             if (event.key === 'Escape') {
                 this.wireEditor.handleKeyDown(event);
                 this._clearSelection();
@@ -526,6 +582,46 @@ class CircuitEditorApp {
         return match ? match[1] : '';
     }
 
+    _parseSubcircuitHeader(definition = '') {
+        const params = [];
+        if (typeof definition !== 'string' || !definition.trim()) {
+            return { name: '', params };
+        }
+
+        const headerLine = definition
+            .split(/\r?\n/)
+            .map(line => line.trim())
+            .find(line => line && !line.startsWith('*') && /^\.subckt/i.test(line));
+
+        if (!headerLine) return { name: '', params };
+
+        const tokens = headerLine.split(/\s+/).filter(Boolean);
+        if (tokens.length < 2) return { name: '', params };
+
+        let collectingParams = false;
+        for (let i = 2; i < tokens.length; i += 1) {
+            const token = tokens[i];
+            const lowered = token.toLowerCase();
+
+            if (lowered === 'params:' || lowered === 'param:' || lowered === 'par:') {
+                collectingParams = true;
+                continue;
+            }
+
+            const hasEquals = token.includes('=');
+            if (hasEquals || collectingParams) {
+                const [namePart, ...rest] = token.split('=');
+                const name = namePart?.trim();
+                if (!name) continue;
+                const defaultValue = rest.join('=').trim();
+                params.push({ name, defaultValue });
+                collectingParams = true;
+            }
+        }
+
+        return { name: tokens[1], params };
+    }
+
     _openComponentModal(component) {
         const overlay = document.getElementById('component-modal');
         const labelInput = document.getElementById('component-label-input');
@@ -533,12 +629,14 @@ class CircuitEditorApp {
         const modelSelect = document.getElementById('component-model-select');
         const valueField = document.getElementById('component-value-field');
         const valueInput = document.getElementById('component-value-input');
+        const subcktArgsField = document.getElementById('component-subcircuit-args-field');
+        const subcktArgsContainer = document.getElementById('component-subcircuit-args-container');
         const customModelInput = document.getElementById('component-custom-model-input');
-        const spiceInput = document.getElementById('component-spice-input');
 
-        if (!overlay || !labelInput || !modelField || !modelSelect || !valueField || !valueInput || !customModelInput || !spiceInput) return;
+        if (!overlay || !labelInput || !modelField || !modelSelect || !valueField || !valueInput || !customModelInput || !subcktArgsField || !subcktArgsContainer) return;
 
         const definition = component.meta?.definition;
+        const isSubcircuit = definition?.componentType === 'subcircuit';
         const models = this._normalizeDefinitionModels(definition);
         const defaultValue = definition?.defaultValue;
         const hasValue =
@@ -548,7 +646,10 @@ class CircuitEditorApp {
 
         labelInput.value = component.meta?.designatorText ?? component.name ?? component.id ?? '';
 
-        if (models.length > 0) {
+        if (isSubcircuit) {
+            modelField.style.display = 'none';
+            modelSelect.innerHTML = '';
+        } else if (models.length > 0) {
             modelField.style.display = 'flex';
             modelSelect.innerHTML = '';
             models.forEach(entry => {
@@ -575,12 +676,7 @@ class CircuitEditorApp {
                 : '');
         customModelInput.value = customModel;
 
-        const spiceOverride = typeof component.meta?.spiceModel === 'string' && !component.meta.spiceModel.trim().toLowerCase().startsWith('.model')
-            ? component.meta.spiceModel.trim()
-            : '';
-        spiceInput.value = spiceOverride;
-
-        if (hasValue) {
+        if (!isSubcircuit && hasValue) {
             valueField.style.display = 'flex';
             valueInput.disabled = false;
             valueInput.value = component.meta?.valueText ?? defaultValue ?? '';
@@ -588,6 +684,43 @@ class CircuitEditorApp {
             valueField.style.display = 'none';
             valueInput.disabled = true;
             valueInput.value = '';
+        }
+
+        if (isSubcircuit) {
+            const parsed = this._parseSubcircuitHeader(definition?.subcircuit?.definition || '');
+            const args = parsed.params;
+            const existingArgs = component.meta?.subcircuitArgs || {};
+            subcktArgsContainer.innerHTML = '';
+            if (args.length > 0) {
+                args.forEach(arg => {
+                    const row = document.createElement('div');
+                    row.className = 'modal-field subckt-arg-row';
+
+                    const label = document.createElement('label');
+                    label.textContent = arg.name;
+                    label.htmlFor = `subckt-arg-${arg.name}`;
+
+                    const input = document.createElement('input');
+                    input.type = 'text';
+                    input.id = `subckt-arg-${arg.name}`;
+                    input.dataset.argName = arg.name;
+                    input.value = existingArgs[arg.name] ?? '';
+                    if (arg.defaultValue) {
+                        input.placeholder = arg.defaultValue;
+                    }
+
+                    row.appendChild(label);
+                    row.appendChild(input);
+                    subcktArgsContainer.appendChild(row);
+                });
+                subcktArgsField.style.display = 'flex';
+            } else {
+                subcktArgsField.style.display = 'none';
+                subcktArgsContainer.innerHTML = '';
+            }
+        } else {
+            subcktArgsField.style.display = 'none';
+            subcktArgsContainer.innerHTML = '';
         }
 
         overlay.classList.add('is-open');
@@ -619,10 +752,10 @@ class CircuitEditorApp {
         const modelSelect = document.getElementById('component-model-select');
         const valueField = document.getElementById('component-value-field');
         const valueInput = document.getElementById('component-value-input');
+        const subcktArgsContainer = document.getElementById('component-subcircuit-args-container');
         const customModelInput = document.getElementById('component-custom-model-input');
-        const spiceInput = document.getElementById('component-spice-input');
 
-        if (!labelInput || !modelField || !modelSelect || !valueField || !valueInput || !customModelInput || !spiceInput) {
+        if (!labelInput || !modelField || !modelSelect || !valueField || !valueInput || !customModelInput) {
             this._closeComponentModal();
             return;
         }
@@ -630,7 +763,7 @@ class CircuitEditorApp {
         const label = labelInput.value.trim();
         const value = valueInput.value.trim();
         const customModel = customModelInput.value.trim();
-        const spice = spiceInput.value.trim();
+        const isSubcircuit = this._editingComponent.meta?.definition?.componentType === 'subcircuit';
 
         const models = this._normalizeDefinitionModels(this._editingComponent.meta?.definition);
         if (models.length > 0 && modelField.style.display !== 'none') {
@@ -641,17 +774,30 @@ class CircuitEditorApp {
         }
 
         this._editingComponent.meta.designatorText = label;
-        if (valueField.style.display !== 'none') {
+        if (!isSubcircuit && valueField.style.display !== 'none') {
             this._editingComponent.meta.valueText = value;
+        } else if (isSubcircuit) {
+            this._editingComponent.meta.valueText = null;
         }
         const customModelStatement = customModel.toLowerCase().startsWith('.model') ? customModel : '';
-        const spiceIsModel = spice.toLowerCase().startsWith('.model');
-        const spiceParams = !spiceIsModel ? spice : '';
-        const modelStatementFromSpice = spiceIsModel ? spice : '';
-        const finalModelStatement = customModelStatement || modelStatementFromSpice;
 
-        this._editingComponent.meta.customModelStatement = finalModelStatement || null;
-        this._editingComponent.meta.spiceModel = spiceParams || null;
+        this._editingComponent.meta.customModelStatement = customModelStatement || null;
+        this._editingComponent.meta.spiceModel = null;
+
+        if (subcktArgsContainer && isSubcircuit) {
+            const entries = Array.from(subcktArgsContainer.querySelectorAll('input[data-arg-name]'));
+            const argMap = {};
+            entries.forEach(input => {
+                const name = input.dataset.argName;
+                const val = input.value.trim();
+                if (name && val) {
+                    argMap[name] = val;
+                }
+            });
+            this._editingComponent.meta.subcircuitArgs = Object.keys(argMap).length > 0 ? argMap : null;
+        } else {
+            this._editingComponent.meta.subcircuitArgs = null;
+        }
 
         this.viewport.render();
         this._closeComponentModal();
@@ -802,7 +948,7 @@ class CircuitEditorApp {
 
         const instanceId = `${definitionId}-${this._componentCounter++}`;
         const designatorText = this._nextDesignator(definition.designator);
-        const valueText = definition.defaultValue ?? null;
+        const valueText = definition.componentType === 'subcircuit' ? null : definition.defaultValue ?? null;
 
         const component = createComponentFromDefinition({
             instanceId,
@@ -1203,11 +1349,25 @@ class CircuitEditorApp {
 
     _runNgspiceSimulation() {
         if (!this.spiceRunBtn || !this.spiceStatusEl || !this.spiceOutputEl) return;
-        
-        let netlistData;
+
+        const directives = (this.simulationDirectives && this.simulationDirectives.length > 0)
+            ? this.simulationDirectives
+            : [{ type: 'op', text: '.op', params: {} }];
+
+        // Build one netlist per directive so we can render a plot for each
+        let jobs;
         try {
-            netlistData = this.netlistGenerator.generateWithMetadata(this.simulationDirectives, {
-                includeControlBlock: true
+            jobs = directives.map((dir, idx) => {
+                const { netlist, probeInfo, analysisType } = this.netlistGenerator.generateWithMetadata([dir], {
+                    includeControlBlock: true
+                });
+                return {
+                    idx,
+                    label: dir.text || dir.type || `Directive ${idx + 1}`,
+                    netlist,
+                    probeInfo,
+                    analysisType
+                };
             });
         } catch (error) {
             this._setRunStatus('error', 'Failed to generate netlist');
@@ -1215,18 +1375,9 @@ class CircuitEditorApp {
             return;
         }
 
-        const { netlist, probeInfo, analysisType } = netlistData;
-        
-        // Store for use in plotting
-        this._lastProbeInfo = probeInfo;
-        this._lastAnalysisType = analysisType;
-
-        this.spiceOutputEl.textContent = 'Starting simulation...';
+        this.spiceOutputEl.textContent = '';
         this._clearPlot();
-        this._appendRunOutput('');
-        this._appendRunOutput('* --- Netlist sent to ngspice ---');
-        this._appendRunOutput(netlist);
-        this._appendRunOutput('* --------------------------------');
+        this._appendRunOutput('* --- Starting simulations ---');
 
         this._setRunStatus('running', 'Running simulation...');
         this.spiceRunBtn.disabled = true;
@@ -1236,68 +1387,126 @@ class CircuitEditorApp {
             this.spiceWorker = null;
         }
 
-        this.spiceWorker = new Worker('/ngspice-worker.js');
-        const worker = this.spiceWorker;
+        this._pendingSimJobs = jobs;
+        this._simResults = [];
 
-        worker.onmessage = (e) => {
-            const { type, text, message, outputData, stdout, stderr, stack } = e.data;
-            switch (type) {
-                case 'ready':
-                    worker.postMessage({ 
-                        type: 'run', 
-                        netlist,
-                        spinit: this.spinitContent
-                    });
-                    break;
-                case 'status':
-                    this._appendRunOutput(`[status] ${text}`);
-                    break;
-                case 'stdout':
-                    this._appendRunOutput(text);
-                    break;
-                case 'stderr':
-                    this._appendRunOutput(`[stderr] ${text}`);
-                    break;
-                case 'complete':
-                    this._setRunStatus('ready', 'Simulation complete');
-                    this.spiceRunBtn.disabled = false;
-                    if (outputData) {
-                        this._appendRunOutput('--- output.txt ---');
-                        this._appendRunOutput(outputData);
-                        this._plotResults(outputData, this._lastProbeInfo, this._lastAnalysisType);
-                    } else {
-                        this._appendRunOutput('[note] No output.txt file generated');
-                        if (stdout) {
-                            this._appendRunOutput(stdout);
-                            this._tryParsePrintOutput(stdout);
-                        }
-                        if (stderr) this._appendRunOutput(stderr);
-                    }
-                    worker.terminate();
-                    this.spiceWorker = null;
-                    break;
-                case 'error':
-                    this._setRunStatus('error', 'Simulation failed');
-                    this.spiceRunBtn.disabled = false;
-                    this._appendRunOutput(`[error] ${message}`);
-                    if (stack) this._appendRunOutput(stack);
-                    this._showErrorPlaceholder(message);
-                    worker.terminate();
-                    this.spiceWorker = null;
-                    break;
-                default:
-                    break;
+        let currentJobIndex = -1;
+
+        const startWorkerForJob = (index) => {
+            // Always start a fresh worker to fully reinitialize ngspice between jobs
+            if (this.spiceWorker) {
+                try { this.spiceWorker.terminate(); } catch (_) {}
+                this.spiceWorker = null;
             }
+
+            const job = jobs[index];
+            const worker = new Worker('/ngspice-worker.js');
+            this.spiceWorker = worker;
+
+            const sendRun = () => {
+                this._appendRunOutput(`* [${index + 1}/${jobs.length}] ${job.label}`);
+                this._appendRunOutput('* --- Netlist sent to ngspice ---');
+                this._appendRunOutput(job.netlist);
+                this._appendRunOutput('* --------------------------------');
+                worker.postMessage({
+                    type: 'run',
+                    netlist: job.netlist,
+                    spinit: this.spinitContent
+                });
+            };
+
+            worker.onmessage = (e) => {
+                const { type, text, message, outputData, stdout, stderr, stack } = e.data;
+                switch (type) {
+                    case 'ready': {
+                        currentJobIndex = index;
+                        sendRun();
+                        break;
+                    }
+                    case 'status': {
+                        this._appendRunOutput(`[status] ${text}`);
+                        break;
+                    }
+                    case 'stdout': {
+                        this._appendRunOutput(text);
+                        break;
+                    }
+                    case 'stderr': {
+                        this._appendRunOutput(`[stderr] ${text}`);
+                        break;
+                    }
+                    case 'complete': {
+                        const jobDone = jobs[currentJobIndex];
+                        this._simResults.push({
+                            ...jobDone,
+                            outputData,
+                            stdout,
+                            stderr
+                        });
+
+                        try { worker.terminate(); } catch (_) {}
+                        this.spiceWorker = null;
+
+                        const nextIndex = currentJobIndex + 1;
+                        if (nextIndex < jobs.length) {
+                            startWorkerForJob(nextIndex);
+                        } else {
+                            finishAll();
+                        }
+                        break;
+                    }
+                    case 'error': {
+                        this._setRunStatus('error', 'Simulation failed');
+                        this.spiceRunBtn.disabled = false;
+                        this._appendRunOutput(`[error] ${message}`);
+                        if (stack) this._appendRunOutput(stack);
+                        this._showErrorPlaceholder(message);
+                        try { worker.terminate(); } catch (_) {}
+                        this.spiceWorker = null;
+                        break;
+                    }
+                    default:
+                        break;
+                }
+            };
+
+            worker.onerror = (err) => {
+                this._setRunStatus('error', 'Worker error');
+                this.spiceRunBtn.disabled = false;
+                this._appendRunOutput(`[worker] ${err.message}`);
+                this._showErrorPlaceholder(err.message);
+                try { worker.terminate(); } catch (_) {}
+                this.spiceWorker = null;
+            };
         };
 
-        worker.onerror = (err) => {
-            this._setRunStatus('error', 'Worker error');
+        const finishAll = () => {
+            this._setRunStatus('ready', 'Simulation complete');
             this.spiceRunBtn.disabled = false;
-            this._appendRunOutput(`[worker] ${err.message}`);
-            this._showErrorPlaceholder(err.message);
+
+            // Render plots for each completed job
+            this._simResults.forEach((result) => {
+                if (result.outputData) {
+                    this._appendRunOutput(`--- output (${result.label}) ---`);
+                    this._appendRunOutput(result.outputData);
+                    const plotId = `${result.analysisType || 'plot'}-${result.idx + 1}-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`;
+                    this._plotResults(result.outputData, result.probeInfo, result.analysisType, plotId);
+                } else if (result.stdout) {
+                    this._appendRunOutput(`[note] No output.txt for ${result.label}`);
+                    this._appendRunOutput(result.stdout);
+                    const plotId = `${result.analysisType || 'plot'}-${result.idx + 1}-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`;
+                    this._tryParsePrintOutput(result.stdout, result.probeInfo, result.analysisType, plotId);
+                } else if (result.stderr) {
+                    this._appendRunOutput(result.stderr);
+                }
+            });
+
             worker.terminate();
             this.spiceWorker = null;
         };
+
+        // Kick off the first job
+        startWorkerForJob(0);
     }
 
     _setRunStatus(state, text) {
@@ -1339,6 +1548,7 @@ class CircuitEditorApp {
                 <span>Running simulation...</span>
             </div>
         `;
+        this._plotCounter = 0;
     }
     
     /**
@@ -1434,7 +1644,7 @@ class CircuitEditorApp {
         return container.querySelector('.plot-area');
     }
 
-    _tryParsePrintOutput(stdout) {
+    _tryParsePrintOutput(stdout, probeInfo = [], analysisType = 'tran', plotId = null) {
         if (!stdout) return;
         const lines = stdout.split('\n');
         const dataLines = lines.filter(line => {
@@ -1442,7 +1652,7 @@ class CircuitEditorApp {
             return /^\d/.test(trimmed) || /^-?\d*\.\d+/.test(trimmed);
         });
         if (dataLines.length > 0) {
-            this._plotResults(dataLines.join('\n'), this._lastProbeInfo, this._lastAnalysisType);
+            this._plotResults(dataLines.join('\n'), probeInfo, analysisType, plotId);
         }
     }
 
@@ -1452,7 +1662,7 @@ class CircuitEditorApp {
      * @param {Array<{label: string, node: string}>} probeInfo - Probe metadata
      * @param {string} analysisType - Type of analysis ('ac', 'tran', 'dc', 'op')
      */
-    _plotResults(data, probeInfo = [], analysisType = 'tran') {
+    _plotResults(data, probeInfo = [], analysisType = 'tran', plotId = null) {
         if (!this.spicePlotsEl) return;
         if (!data || !data.trim()) return;
         if (!window.Plotly) {
@@ -1473,7 +1683,7 @@ class CircuitEditorApp {
         }
 
         // Create a plot container for this analysis
-        const plotArea = this._createPlotContainer(analysisType, Date.now());
+        const plotArea = this._createPlotContainer(analysisType, plotId || ++this._plotCounter);
         console.log('[_plotResults] created plotArea:', plotArea);
         if (!plotArea) return;
 
@@ -1667,26 +1877,62 @@ class CircuitEditorApp {
         const signals = {};
         const signalColors = {};
 
+        const firstLine = lines.find(l => l.trim().length > 0);
+        if (!firstLine) {
+            this._appendRunOutput('[note] Unable to parse data for plotting');
+            return;
+        }
+
+        const firstParts = firstLine.trim().split(/\s+/).map(Number);
+        if (firstParts.length < 2 || !Number.isFinite(firstParts[0])) {
+            this._appendRunOutput('[note] Unable to parse data for plotting');
+            return;
+        }
+
+        // Detect whether wrdata produced paired time/value columns (time, v1, time, v2, ...)
+        const evenIndexedTimes = [];
+        for (let i = 0; i < firstParts.length; i += 2) {
+            evenIndexedTimes.push(firstParts[i]);
+        }
+        const timesConsistent = evenIndexedTimes.every(t => Number.isFinite(t) && Math.abs(t - evenIndexedTimes[0]) <= 1e-12);
+        const usePairedFormat = (firstParts.length % 2 === 0) && timesConsistent;
+
+        const inferredSignalCount = usePairedFormat ? Math.floor(firstParts.length / 2) : (firstParts.length - 1);
+        const signalCount = probeInfo?.length > 0 ? Math.max(probeInfo.length, inferredSignalCount) : inferredSignalCount;
+
+        const labels = [];
+        for (let i = 0; i < signalCount; i++) {
+            const label = probeInfo?.[i]?.label || `Signal ${i + 1}`;
+            labels.push(label);
+            if (probeInfo?.[i]?.color) {
+                signalColors[label] = probeInfo[i].color;
+            }
+        }
+
         lines.forEach((line) => {
             const parts = line.trim().split(/\s+/).map(Number);
-            if (parts.length >= 2 && Number.isFinite(parts[0]) && Number.isFinite(parts[1])) {
-                xValues.push(parts[0]);
-                parts.slice(1).forEach((val, i) => {
-                    // Use probe labels if available, otherwise generic names
-                    let sigName;
-                    if (probeInfo && probeInfo[i]) {
-                        sigName = probeInfo[i].label;
-                        signalColors[sigName] = probeInfo[i].color;
-                    } else {
-                        sigName = `Signal ${i + 1}`;
-                    }
-                    if (!signals[sigName]) signals[sigName] = [];
-                    signals[sigName].push(val);
-                });
+            if (parts.length < 2 || !Number.isFinite(parts[0])) return;
+
+            const availableSignals = usePairedFormat ? Math.floor(parts.length / 2) : (parts.length - 1);
+            const lineSignalCount = Math.min(signalCount, availableSignals);
+
+            const timeValue = parts[0];
+            if (!Number.isFinite(timeValue)) return;
+            xValues.push(timeValue);
+
+            for (let i = 0; i < lineSignalCount; i++) {
+                const valIdx = usePairedFormat ? (i * 2) + 1 : i + 1;
+                if (valIdx >= parts.length) continue;
+                const val = parts[valIdx];
+                if (!Number.isFinite(val)) continue;
+
+                const sigName = labels[i];
+                if (!signals[sigName]) signals[sigName] = [];
+                signals[sigName].push(val);
             }
         });
 
-        if (xValues.length === 0) {
+        if (xValues.length === 0 || Object.keys(signals).length === 0) {
             this._appendRunOutput('[note] Unable to parse data for plotting');
             return;
         }

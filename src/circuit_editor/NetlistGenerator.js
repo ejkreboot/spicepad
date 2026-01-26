@@ -55,6 +55,19 @@ export class NetlistGenerator {
         const netMap = this._buildNetMap();
         const netNames = Array.from(new Set(netMap.values())).filter(name => name !== '0');
 
+        // Inline subcircuit definitions so instances resolve
+        const subcircuitBlocks = this._collectSubcircuits();
+        if (subcircuitBlocks.length > 0) {
+            lines.push('* Subcircuits');
+            subcircuitBlocks.forEach((block, index) => {
+                block.forEach(line => lines.push(line));
+                if (index < subcircuitBlocks.length - 1) {
+                    lines.push('');
+                }
+            });
+            lines.push('');
+        }
+
         // Generate component lines
         const componentLines = this._generateComponentLines(netMap);
         if (componentLines.length > 0) {
@@ -285,7 +298,8 @@ export class NetlistGenerator {
     _generateComponentLine(component, netMap) {
         const definition = component.meta?.definition;
         const designator = component.meta?.designatorText || component.name || component.id;
-        const value = component.meta?.valueText || definition?.defaultValue || '';
+        const isSubcircuit = definition?.componentType === 'subcircuit';
+        const value = isSubcircuit ? '' : (component.meta?.valueText || definition?.defaultValue || '');
 
         // Get pin connections
         const pinMap = this.componentManager.pinNodeIdsByComponent.get(component.id);
@@ -298,23 +312,34 @@ export class NetlistGenerator {
         });
 
         // Generate based on component type
-        const spiceType = definition?.spiceType || this._guessSpiceType(designator);
+        const spiceType = definition?.spiceType
+            || (isSubcircuit ? 'subcircuit' : this._guessSpiceType(designator));
         
         if (!spiceType) return null;
 
-        const modelInfo = this._resolveModelInfo(component);
+        const modelInfo = spiceType === 'subcircuit' ? null : this._resolveModelInfo(component);
 
         // Format: [designator] [node1] [node2] ... [value/model]
         let line = `${designator} ${netNames.join(' ')}`;
 
         // Inline overrides take precedence over defaults
-        if (modelInfo.inlineOverride) {
+        if (modelInfo?.inlineOverride) {
             line += ` ${modelInfo.inlineOverride}`;
             return line;
         }
 
         // Use appropriate default based on component type
         switch (spiceType) {
+            case 'subcircuit': {
+                const subcktName = definition?.subcircuit?.name || '';
+                if (!subcktName) return null;
+                line += ` ${subcktName}`;
+                const args = this._buildSubcircuitArgs(component);
+                if (args.length > 0) {
+                    line += ` ${args.join(' ')}`;
+                }
+                break;
+            }
             case 'voltage':
                 // Voltage sources need DC/AC specification
                 line += value ? ` ${value}` : ' DC 0';
@@ -453,6 +478,31 @@ export class NetlistGenerator {
             models.push(statement);
         }
         return models;
+    }
+
+    _collectSubcircuits() {
+        const seen = new Set();
+        const blocks = [];
+        for (const component of this.componentManager.components) {
+            const descriptor = component.meta?.definition?.subcircuit;
+            const name = typeof descriptor?.name === 'string' ? descriptor.name.trim() : '';
+            const definition = typeof descriptor?.definition === 'string' ? descriptor.definition.trim() : '';
+            if (!name || !definition) continue;
+            const key = `${name.toLowerCase()}::${definition.replace(/\s+/g, ' ').toLowerCase()}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            const lines = definition.split(/\r?\n/).map(line => line.replace(/\s+$/u, ''));
+            blocks.push(lines);
+        }
+        return blocks;
+    }
+
+    _buildSubcircuitArgs(component) {
+        const args = component?.meta?.subcircuitArgs;
+        if (!args || typeof args !== 'object') return [];
+        return Object.entries(args)
+            .filter(([name, val]) => Boolean(name) && val !== undefined && val !== null && String(val).trim() !== '')
+            .map(([name, val]) => `${name}=${val}`);
     }
 
     /**

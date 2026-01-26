@@ -23,12 +23,17 @@ export class ComponentManager {
 		this.dragComponent = null;
 		this.dragStartWorld = null;
 		this.dragStartPos = null;
+		this.isLabelDragging = false;
+		this.dragLabelInfo = null;
+		this.hoverLabelHit = null;
+				this.hoverComponent = null;
         
 		// Appearance
 		this.bodyStroke = '#111111';
 		this.bodyFill = '#ffffff';
 		this.pinFill = '#111111';
 		this.pinRadius = 3.5;
+		this.floatingPinColor = '#ef4444';
 		this.hitPadding = 2;
 		this.pinHitTolerance = 6;
 		this.ghostFill = '#e2e8f0';
@@ -145,6 +150,20 @@ export class ComponentManager {
 		if (event.button !== 0) return false;
 		if (event.shiftKey) return false;
         
+		const labelHit = this._findLabelHit(worldX, worldY);
+		if (labelHit) {
+			this.isLabelDragging = true;
+			this.dragLabelInfo = {
+				component: labelHit.component,
+				labelType: labelHit.labelType,
+				labelIndex: labelHit.labelIndex,
+				offset: {
+					dx: worldX - labelHit.position.x,
+					dy: worldY - labelHit.position.y
+				}
+			};
+			return true;
+		}
 		const snapped = this.viewport.snapToGrid(worldX, worldY);
 		const hit = this._getComponentAt(snapped.x, snapped.y);
 		if (!hit) return false;
@@ -162,6 +181,33 @@ export class ComponentManager {
     
 	_onMouseMove(worldX, worldY, event) {
 		if (event?.__selectionHandled) return false;
+		if (this.isLabelDragging && this.dragLabelInfo) {
+			const { component, labelType, labelIndex, offset } = this.dragLabelInfo;
+			const targetX = worldX - offset.dx;
+			const targetY = worldY - offset.dy;
+			this._setLabelOverride(component, labelType, labelIndex, {
+				x: targetX - component.x,
+				y: targetY - component.y
+			});
+			this.viewport.render();
+			return true;
+		}
+
+		// Hover detection for labels when not dragging
+		const prevHoverLabel = this.hoverLabelHit;
+		const prevHoverComponent = this.hoverComponent;
+
+		this.hoverLabelHit = this._findLabelHit(worldX, worldY, 4 / this.viewport.zoom);
+
+		if (!this.isDragging && !this.isLabelDragging) {
+			this.hoverComponent = this.hoverLabelHit ? null : this._getComponentAt(worldX, worldY);
+		} else {
+			this.hoverComponent = null;
+		}
+
+		if (prevHoverLabel !== this.hoverLabelHit || prevHoverComponent !== this.hoverComponent) {
+			this.viewport.render();
+		}
 		if (!this.isDragging || !this.dragComponent) return false;
 		const snapped = this.viewport.snapToGrid(worldX, worldY);
         
@@ -178,6 +224,11 @@ export class ComponentManager {
     
 	_onMouseUp(worldX, worldY, event) {
 		if (event?.__selectionHandled) return false;
+		if (this.isLabelDragging) {
+			this.isLabelDragging = false;
+			this.dragLabelInfo = null;
+			return true;
+		}
 		if (!this.isDragging) return false;
         
 		this.isDragging = false;
@@ -204,17 +255,35 @@ export class ComponentManager {
 	_renderComponents(ctx, viewport) {
 		for (const component of this.components) {
 			const isSelected = this.selectedComponentIds.has(component.id);
+			const isHovered = !isSelected && !this.isDragging && !this.isLabelDragging && this.hoverComponent === component;
 			if (isSelected) {
 				const bounds = component.getBounds();
 				const pad = 4 / viewport.zoom;
-				viewport.drawRect(
+				const radius = 4 / viewport.zoom;
+				viewport.drawRoundedRect(
 					bounds.x - pad,
 					bounds.y - pad,
 					bounds.width + pad * 2,
 					bounds.height + pad * 2,
+					radius,
 					'rgba(59, 130, 246, 0.08)',
 					'#2563eb',
 					2
+				);
+			}
+			if (isHovered) {
+				const bounds = component.getBounds();
+				const pad = 3 / viewport.zoom;
+				const radius = 4 / viewport.zoom;
+				viewport.drawRoundedRect(
+					bounds.x - pad,
+					bounds.y - pad,
+					bounds.width + pad * 2,
+					bounds.height + pad * 2,
+					radius,
+					null,
+					'rgba(59, 130, 246, 0.9)',
+					1.25
 				);
 			}
 
@@ -228,11 +297,54 @@ export class ComponentManager {
             
 			for (const pin of component.pins) {
 				const pos = component.getPinWorldPosition(pin);
-				viewport.drawCircle(pos.x, pos.y, this.pinRadius / viewport.zoom, this.pinFill, null, 0);
+				const nodeId = this._getPinNodeId(component.id, pin.id);
+				const isFloating = this._isPinFloating(nodeId);
+				const fill = isFloating ? this.floatingPinColor : this.pinFill;
+				viewport.drawCircle(pos.x, pos.y, this.pinRadius / viewport.zoom, fill, null, 0);
 			}
 
 			this._renderComponentLabels(ctx, viewport, component);
 		}
+	}
+
+	_getLabelPosition(component, labelType) {
+		const labels = component.meta?.labels;
+		if (!labels) return null;
+		const labelIndex = component.getLabelIndex ? component.getLabelIndex() : 0;
+		const overrides = component.meta?.labelOverrides;
+		const overridePos = overrides?.[labelType]?.[labelIndex];
+		const basePos = labels?.[labelType]?.[labelIndex];
+		const pos = overridePos ?? basePos;
+		if (!pos) return null;
+		return {
+			x: component.x + pos.x,
+			y: component.y + pos.y,
+			labelIndex
+		};
+	}
+
+	_getLabelBounds(component, labelType, text, extraPadding = 0) {
+		if (!text) return null;
+		const position = this._getLabelPosition(component, labelType);
+		if (!position) return null;
+		const ctx = this.viewport.ctx;
+		ctx.save();
+		ctx.setTransform(1, 0, 0, 1, 0, 0);
+		ctx.font = '8px -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif';
+		const metrics = ctx.measureText(String(text));
+		ctx.restore();
+		const fontSize = 8;
+				const padding = (6 / this.viewport.zoom) + extraPadding; // wider hit box for easier grabbing
+				const widthWorld = Math.max((metrics.width || 0), 10);
+				const heightWorld = Math.max(fontSize, 8);
+		return {
+			x: position.x - widthWorld / 2 - padding,
+			y: position.y - heightWorld / 2 - padding,
+			width: widthWorld + padding * 2,
+			height: heightWorld + padding * 2,
+			labelIndex: position.labelIndex,
+			position
+		};
 	}
 
 	_getSvgEntry(component) {
@@ -331,19 +443,50 @@ export class ComponentManager {
 		ctx.textAlign = 'center';
 		ctx.textBaseline = 'middle';
 
-		// Use rotation-aware label index: 0 for 0°/180°, 1 for 90°/270°
-		const labelIndex = component.getLabelIndex ? component.getLabelIndex() : 0;
-		const designatorPos = labels.designator?.[labelIndex];
+
+
+		const designatorPos = this._getLabelPosition(component, 'designator');
 		if (designatorPos && designatorText) {
-			ctx.fillText(designatorText, component.x + designatorPos.x, component.y + designatorPos.y);
+			ctx.fillText(designatorText, designatorPos.x, designatorPos.y);
+			this._maybeRenderLabelHover(ctx, component, 'designator', designatorText);
 		}
 
-		const valuePos = labels.value?.[labelIndex];
+		const valuePos = this._getLabelPosition(component, 'value');
 		if (valuePos && valueText !== null && valueText !== undefined && valueText !== '') {
-			ctx.fillText(String(valueText), component.x + valuePos.x, component.y + valuePos.y);
+			ctx.fillText(String(valueText), valuePos.x, valuePos.y);
+			this._maybeRenderLabelHover(ctx, component, 'value', valueText);
 		}
 
 		viewport.endWorldPath();
+	}
+
+	_maybeRenderLabelHover(ctx, component, labelType, text) {
+		if (!this.hoverLabelHit) return;
+		if (this.hoverLabelHit.component !== component) return;
+		if (this.hoverLabelHit.labelType !== labelType) return;
+		const bounds = this._getLabelBounds(component, labelType, text);
+		if (!bounds) return;
+		ctx.save();
+			const radius = 2; // slightly tighter corners than component outlines
+		const x = bounds.x;
+		const y = bounds.y;
+		const w = bounds.width;
+		const h = bounds.height;
+		const r = Math.min(radius, w / 2, h / 2);
+			ctx.strokeStyle = 'rgba(59, 130, 246, 0.9)';
+			ctx.lineWidth = 1 / this.viewport.zoom; // keep stroke roughly 1px in screen space
+		ctx.beginPath();
+		ctx.moveTo(x + r, y);
+		ctx.lineTo(x + w - r, y);
+		ctx.arcTo(x + w, y, x + w, y + r, r);
+		ctx.lineTo(x + w, y + h - r);
+		ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+		ctx.lineTo(x + r, y + h);
+		ctx.arcTo(x, y + h, x, y + h - r, r);
+		ctx.lineTo(x, y + r);
+		ctx.arcTo(x, y, x + r, y, r);
+		ctx.stroke();
+		ctx.restore();
 	}
 
 	_renderPinLabel(ctx, viewport, component, pin, pinPos) {
@@ -363,6 +506,17 @@ export class ComponentManager {
 		ctx.textBaseline = 'middle';
 		ctx.fillText(pin.name ?? '', labelX, labelY);
 		viewport.endWorldPath();
+	}
+
+	_getPinNodeId(componentId, pinId) {
+		return this.pinNodeIdsByComponent.get(componentId)?.get(pinId) ?? null;
+	}
+
+	_isPinFloating(nodeId) {
+		if (!nodeId) return true;
+		const node = this.wireGraph.getNode(nodeId);
+		if (!node) return true;
+		return this.wireGraph.getConnectionCount(nodeId) === 0;
 	}
     
 	// ==================== Pin Registration ====================
@@ -517,6 +671,45 @@ export class ComponentManager {
 			}
 		}
 		return null;
+	}
+
+	_setLabelOverride(component, labelType, labelIndex, pos) {
+		if (!component.meta) component.meta = {};
+		if (!component.meta.labelOverrides) component.meta.labelOverrides = {};
+		const arr = Array.isArray(component.meta.labelOverrides[labelType]) ? component.meta.labelOverrides[labelType] : [];
+		arr[labelIndex] = { x: pos.x, y: pos.y };
+		component.meta.labelOverrides[labelType] = arr;
+	}
+
+	_findLabelHit(worldX, worldY, extraPadding = 0) {
+		for (let i = this.components.length - 1; i >= 0; i--) {
+			const component = this.components[i];
+			const designatorBounds = this._getLabelBounds(component, 'designator', component.meta?.designatorText ?? '', extraPadding);
+			if (designatorBounds && this._pointInRect(worldX, worldY, designatorBounds)) {
+				return { component, labelType: 'designator', labelIndex: designatorBounds.labelIndex, position: designatorBounds.position };
+			}
+			const valueText = component.meta?.valueText;
+			if (valueText !== null && valueText !== undefined && valueText !== '') {
+				const valueBounds = this._getLabelBounds(component, 'value', valueText, extraPadding);
+				if (valueBounds && this._pointInRect(worldX, worldY, valueBounds)) {
+					return { component, labelType: 'value', labelIndex: valueBounds.labelIndex, position: valueBounds.position };
+				}
+			}
+		}
+		return null;
+	}
+
+	findLabelHit(worldX, worldY) {
+		return this._findLabelHit(worldX, worldY);
+	}
+
+	_pointInRect(x, y, rect) {
+		return (
+			x >= rect.x &&
+			x <= rect.x + rect.width &&
+			y >= rect.y &&
+			y <= rect.y + rect.height
+		);
 	}
 
 	getComponentAt(worldX, worldY) {

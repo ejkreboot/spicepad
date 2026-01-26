@@ -111,7 +111,7 @@
 
     "X": {
       "name": "Subcircuit",
-      "description": "User-defined subcircuit instance",
+      "description": "User-defined subcircuit instance (componentType \"subcircuit\" is preferred)",
       "defaultValue": "subckt_name"
     }
   }

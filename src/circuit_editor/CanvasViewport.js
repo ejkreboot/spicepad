@@ -507,6 +507,46 @@ export class CanvasViewport {
             ctx.strokeRect(topLeft.x, topLeft.y, screenWidth, screenHeight);
         }
     }
+
+    /**
+     * Draw a rounded rectangle in world coordinates
+     * @param {number} x
+     * @param {number} y
+     * @param {number} width
+     * @param {number} height
+     * @param {number} radius - radius in world units (will scale with zoom)
+     * @param {string|null} fillColor
+     * @param {string|null} strokeColor
+     * @param {number} lineWidth - in screen pixels
+     */
+    drawRoundedRect(x, y, width, height, radius, fillColor = null, strokeColor = '#333', lineWidth = 2) {
+        const ctx = this.ctx;
+        const topLeft = this.worldToScreen(x, y);
+        const screenWidth = width * this.zoom;
+        const screenHeight = height * this.zoom;
+        const r = Math.max(0, Math.min(radius * this.zoom, Math.min(screenWidth, screenHeight) / 2));
+
+        ctx.beginPath();
+        ctx.moveTo(topLeft.x + r, topLeft.y);
+        ctx.lineTo(topLeft.x + screenWidth - r, topLeft.y);
+        ctx.arcTo(topLeft.x + screenWidth, topLeft.y, topLeft.x + screenWidth, topLeft.y + r, r);
+        ctx.lineTo(topLeft.x + screenWidth, topLeft.y + screenHeight - r);
+        ctx.arcTo(topLeft.x + screenWidth, topLeft.y + screenHeight, topLeft.x + screenWidth - r, topLeft.y + screenHeight, r);
+        ctx.lineTo(topLeft.x + r, topLeft.y + screenHeight);
+        ctx.arcTo(topLeft.x, topLeft.y + screenHeight, topLeft.x, topLeft.y + screenHeight - r, r);
+        ctx.lineTo(topLeft.x, topLeft.y + r);
+        ctx.arcTo(topLeft.x, topLeft.y, topLeft.x + r, topLeft.y, r);
+
+        if (fillColor) {
+            ctx.fillStyle = fillColor;
+            ctx.fill();
+        }
+        if (strokeColor) {
+            ctx.strokeStyle = strokeColor;
+            ctx.lineWidth = lineWidth;
+            ctx.stroke();
+        }
+    }
     
     // ==================== Public API ====================
     

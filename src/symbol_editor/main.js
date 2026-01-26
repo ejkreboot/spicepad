@@ -1,5 +1,9 @@
 import { deleteSymbol as deleteSymbolFromStore, loadLibrary, replaceLibrary, saveSymbol } from '../common/storage/library.js';
-
+import { getDefaultComponents } from '../common/defaultComponents.js';  
+    const COMPONENT_TYPES = {
+        PRIMITIVE: 'primitive',
+        SUBCIRCUIT: 'subcircuit'
+    };
 // State
         let components = {};
         let currentComponentId = null;
@@ -176,6 +180,137 @@ import { deleteSymbol as deleteSymbolFromStore, loadLibrary, replaceLibrary, sav
             if (resolved === null) defaultValueIsNull = true;
         }
 
+        function getSelectedComponentType() {
+            const selected = document.querySelector('input[name="compType"]:checked');
+            return selected?.value === COMPONENT_TYPES.SUBCIRCUIT ? COMPONENT_TYPES.SUBCIRCUIT : COMPONENT_TYPES.PRIMITIVE;
+        }
+
+        function setSelectedComponentType(type, options = {}) {
+            const normalized = type === COMPONENT_TYPES.SUBCIRCUIT ? COMPONENT_TYPES.SUBCIRCUIT : COMPONENT_TYPES.PRIMITIVE;
+            const input = document.querySelector(`input[name="compType"][value="${normalized}"]`);
+            if (input) input.checked = true;
+            updateComponentTypeUI(normalized, options);
+        }
+
+        function updateComponentTypeUI(type, options = {}) {
+            const normalized = type === COMPONENT_TYPES.SUBCIRCUIT ? COMPONENT_TYPES.SUBCIRCUIT : COMPONENT_TYPES.PRIMITIVE;
+            const showSubcircuit = normalized === COMPONENT_TYPES.SUBCIRCUIT;
+
+            const prefixRow = document.getElementById('prefixRow');
+            if (prefixRow) {
+                prefixRow.style.display = showSubcircuit ? 'none' : 'flex';
+            }
+            const subRows = document.querySelectorAll('.subckt-row');
+            subRows.forEach(row => {
+                row.style.display = showSubcircuit ? 'flex' : 'none';
+            });
+
+            const prefixInput = document.getElementById('compPrefix');
+            if (prefixInput) {
+                prefixInput.disabled = showSubcircuit;
+                if (showSubcircuit) {
+                    prefixInput.value = 'X';
+                } else if (!prefixInput.value) {
+                    prefixInput.value = getDefaultPrimitivePrefix();
+                }
+            }
+
+            const autoInc = document.getElementById('compAutoInc');
+            if (autoInc && showSubcircuit) {
+                autoInc.checked = true;
+            }
+
+            const defaultInput = document.getElementById('compDefault');
+            if (defaultInput && showSubcircuit) {
+                defaultInput.disabled = false;
+                defaultInput.placeholder = defaultInput.placeholder || '';
+                defaultValueIsNull = false;
+            }
+
+            if (!showSubcircuit) {
+                applyPrimitiveDefaults(document.getElementById('compPrefix')?.value);
+            }
+
+            if (!options.suppressDirty && !isNewComponentDraft) {
+                markCurrentComponentDirty();
+            }
+            requestLabelPreviewUpdate({ immediate: true });
+        }
+
+        function setSubcircuitInputs(subcircuit = {}) {
+            const nameInput = document.getElementById('compSubcktName');
+            const defInput = document.getElementById('compSubcktDefinition');
+            if (nameInput) nameInput.value = subcircuit.name || '';
+            if (defInput) defInput.value = subcircuit.definition || '';
+        }
+
+        function readSubcircuitInputs() {
+            const nameInput = document.getElementById('compSubcktName');
+            const defInput = document.getElementById('compSubcktDefinition');
+            return {
+                name: (nameInput?.value || '').trim(),
+                definition: (defInput?.value || '').trim()
+            };
+        }
+
+        function parseSubcircuitHeader(definition = '') {
+            if (!definition) return null;
+            const lines = definition.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+            const headerLine = lines.find(line => !line.startsWith('*') && /^\.subckt/i.test(line));
+            if (!headerLine) return null;
+            const tokens = headerLine.split(/\s+/).filter(Boolean);
+            if (tokens.length < 2) return { name: '', ports: [] };
+
+            const ports = [];
+            for (let i = 2; i < tokens.length; i += 1) {
+                const token = tokens[i];
+                const lowered = token.toLowerCase();
+                // Stop collecting ports once parameters begin (tokens with '=' or params: prefix)
+                if (token.includes('=') || lowered === 'params:' || lowered === 'param:' || lowered === 'par:') break;
+                ports.push(token);
+            }
+            return {
+                name: tokens[1],
+                ports
+            };
+        }
+
+        function validateSubcircuitDescriptor(subcircuit, pinCount) {
+            const name = (subcircuit?.name || '').trim();
+            const definition = (subcircuit?.definition || '').trim();
+            if (!name) {
+                return { ok: false, message: 'Please provide a subcircuit name.' };
+            }
+            if (!/^[A-Za-z_][A-Za-z0-9_$.-]*$/.test(name)) {
+                return { ok: false, message: 'Subcircuit name must be a valid SPICE identifier (no spaces).' };
+            }
+            if (!definition) {
+                return { ok: false, message: 'Please provide a subcircuit definition.' };
+            }
+
+            const header = parseSubcircuitHeader(definition);
+            if (!header) {
+                return { ok: false, message: 'Subcircuit definition must include a .subckt header line.' };
+            }
+
+            if (header.name && header.name !== name) {
+                const proceed = confirm(`Subcircuit name "${name}" does not match header "${header.name}". Continue?`);
+                if (!proceed) return { ok: false, message: 'Subcircuit name mismatch.' };
+            }
+
+            if (header.ports.length && pinCount && header.ports.length !== pinCount) {
+                const proceed = confirm(`Pin count (${pinCount}) does not match subcircuit port count (${header.ports.length}). Continue?`);
+                if (!proceed) return { ok: false, message: 'Subcircuit port count mismatch.' };
+            }
+
+            if (!/\.ends\b/i.test(definition)) {
+                const proceed = confirm('Subcircuit definition is missing an .ends terminator. Continue?');
+                if (!proceed) return { ok: false, message: 'Subcircuit missing .ends terminator.' };
+            }
+
+            return { ok: true };
+        }
+
         function onPrefixChanged() {
             const select = document.getElementById('compPrefix');
             if (!select) return;
@@ -235,6 +370,8 @@ import { deleteSymbol as deleteSymbolFromStore, loadLibrary, replaceLibrary, sav
             // Load default components
             attachLabelInputListeners();
             attachComponentInputDirtyListeners();
+            attachComponentTypeListeners();
+            setSelectedComponentType(COMPONENT_TYPES.PRIMITIVE, { suppressDirty: true });
             window.addEventListener('mouseup', () => flushLabelPreviewUpdates());
             await loadPrimitives();
             await loadComponentsFromStorage();
@@ -242,69 +379,10 @@ import { deleteSymbol as deleteSymbolFromStore, loadLibrary, replaceLibrary, sav
             updateZoomIndicator();
         }
 
-        function getDefaultComponents() {
-            const resistorSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 60" data-generated-by="symbol-editor" data-comp-width="80" data-comp-height="40" data-offset-x="20" data-offset-y="10"><path fill="none" stroke="#000000" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" d="M 20 30 L 35 30 L 40 22 L 50 38 L 60 22 L 70 38 L 80 22 L 85 30 L 100 30"/></svg>`;
-            const capacitorSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 60" data-generated-by="symbol-editor" data-comp-width="80" data-comp-height="40" data-offset-x="20" data-offset-y="10"><g fill="none" stroke="#000000" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><path d="M 20 30 L 50 30"/><path d="M 50 15 L 50 45"/><path d="M 70 15 L 70 45"/><path d="M 70 30 L 100 30"/></g></svg>`;
-            const groundSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 90 90" data-generated-by="symbol-editor" data-comp-width="60" data-comp-height="60" data-offset-x="15" data-offset-y="15"><g fill="none" stroke="#000000" stroke-width="4" stroke-linecap="round"><path d="M 45 15 L 45 45"/><path d="M 25 45 L 65 45"/><path d="M 30 55 L 60 55"/><path d="M 35 65 L 55 65"/></g></svg>`;
-
-            const library = {
-                resistor: {
-                    name: 'Resistor',
-                    description: 'Standard two-pin resistor symbol',
-                    defaultValue: '1k',
-                    designator: { prefix: 'R', autoIncrement: true },
-                    size: { width: 60, height: 40 },
-                    pins: [
-                        { id: '1', name: 'A', position: { x: 0, y: 20 }, labelPosition: { x: 2, y: 18 } },
-                        { id: '2', name: 'B', position: { x: 60, y: 20 }, labelPosition: { x: 57, y: 18 } }
-                    ],
-                    labels: {
-                        designator: [{ x: 29, y: 10 }, { x: 43, y: 16 }],
-                        value: [{ x: 29, y: 31 }, { x: 43, y: 22 }]
-                    },
-                    svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 90 60" data-generated-by="symbol-editor" data-comp-width="60" data-comp-height="40" data-offset-x="15" data-offset-y="10"><polyline points="15,30 30,30 32,24 37,36 42,24 47,36 51,24 56,36 58,30 75,30 70,30" fill="none" stroke="#000000" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg>`
-                },
-                capacitor: {
-                    name: 'Capacitor',
-                    description: '',
-                    defaultValue: '1uF',
-                    designator: { prefix: 'C', autoIncrement: true },
-                    size: { width: 60, height: 40 },
-                    pins: [
-                        { id: '1', name: 'A', position: { x: 0, y: 20 }, labelPosition: { x: 2, y: 18 } },
-                        { id: '2', name: 'B', position: { x: 60, y: 20 }, labelPosition: { x: 56, y: 18 } }
-                    ],
-                    labels: {
-                        designator: [{ x: 29, y: 4 }, { x: 49, y: 18 }],
-                        value: [{ x: 29, y: 36 }, { x: 49, y: 24 }]
-                    },
-                    svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 90 60" data-generated-by="symbol-editor" data-comp-width="60" data-comp-height="40" data-offset-x="15" data-offset-y="10"><path fill="none" stroke="#000000" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" d="M 15 30 L 39 30"/><path fill="none" stroke="#000000" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" d="M 39 20 L 39 40"/><path fill="none" stroke="#000000" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" d="M 51 20 L 51 40"/><path fill="none" stroke="#000000" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" d="M 51 30 L 75 30"/></svg>`
-                },
-                ground: {
-                    name: 'Ground',
-                    description: '',
-                    defaultValue: null,
-                    designator: { prefix: 'GND', autoIncrement: false },
-                    size: { width: 60, height: 50 },
-                    isGround: true,
-                    pins: [
-                        { id: '1', name: 'GND', position: { x: 30, y: 0 }, labelPosition: { x: 32, y: 4 } }
-                    ],
-                    labels: {
-                        designator: [{ x: 49, y: 51 }, { x: -12, y: 30 }],
-                        value: [{ x: 49, y: 43 }, { x: 70, y: 30 }]
-                    },
-                    svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 90 75" data-generated-by="symbol-editor" data-comp-width="60" data-comp-height="50" data-offset-x="15" data-offset-y="13"><path fill="none" stroke="#000000" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" d="M 45 13 L 45 43"/><path fill="none" stroke="#000000" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" d="M 25 43 L 65 43"/><path fill="none" stroke="#000000" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" d="M 33 53 L 58 53"/><path fill="none" stroke="#000000" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" d="M 41 63 L 49 63"/></svg>`
-                }
-            };
-
-            normalizeModelFields(library);
-            return library;
-        }
 
         function applyComponentsToState(nextComponents) {
             components = nextComponents || {};
-            normalizeModelFields(components);
+            normalizeComponents(components);
             dirtyComponents.clear();
             currentComponentId = null;
             isNewComponentDraft = false;
@@ -480,6 +558,15 @@ import { deleteSymbol as deleteSymbolFromStore, loadLibrary, replaceLibrary, sav
             ['compId', 'compName'].forEach(id => attachDirtyListenerToInput(id, { updateDraftList: true }));
             ['compPrefix', 'compDefault', 'compWidth', 'compHeight'].forEach(id => attachDirtyListenerToInput(id));
             attachDirtyListenerToInput('compAutoInc');
+            ['compSubcktName', 'compSubcktDefinition'].forEach(id => attachDirtyListenerToInput(id));
+        }
+
+        function attachComponentTypeListeners() {
+            document.querySelectorAll('input[name="compType"]').forEach(input => {
+                input.addEventListener('change', () => {
+                    setSelectedComponentType(input.value);
+                });
+            });
         }
 
         function attachDirtyListenerToInput(id, options = {}) {
@@ -2378,6 +2465,42 @@ import { deleteSymbol as deleteSymbolFromStore, loadLibrary, replaceLibrary, sav
             });
         }
 
+        function normalizeSubcircuitDescriptor(input = {}) {
+            return {
+                name: typeof input?.name === 'string' ? input.name.trim() : '',
+                definition: typeof input?.definition === 'string' ? input.definition : ''
+            };
+        }
+
+        function normalizeComponentRecord(comp) {
+            if (!comp || typeof comp !== 'object') return comp;
+
+            comp.componentType = comp.componentType === COMPONENT_TYPES.SUBCIRCUIT
+                ? COMPONENT_TYPES.SUBCIRCUIT
+                : COMPONENT_TYPES.PRIMITIVE;
+
+            if (!comp.designator || typeof comp.designator !== 'object') {
+                comp.designator = {
+                    prefix: getDefaultPrimitivePrefix() || 'U',
+                    autoIncrement: true
+                };
+            }
+
+            if (comp.componentType === COMPONENT_TYPES.SUBCIRCUIT) {
+                comp.designator.prefix = 'X';
+                comp.subcircuit = normalizeSubcircuitDescriptor(comp.subcircuit);
+            }
+
+            comp.models = normalizeModelsArray(comp.models ?? comp.model ?? []);
+            if ('model' in comp) delete comp.model;
+            return comp;
+        }
+
+        function normalizeComponents(map) {
+            if (!map || typeof map !== 'object') return;
+            Object.values(map).forEach(comp => normalizeComponentRecord(comp));
+        }
+
         // Component management
         function updateComponentList() {
             const container = document.getElementById('componentList');
@@ -2417,16 +2540,35 @@ import { deleteSymbol as deleteSymbolFromStore, loadLibrary, replaceLibrary, sav
         function loadComponent(id) {
             isNewComponentDraft = false;
             currentComponentId = id;
-            const comp = components[id];
+            const comp = normalizeComponentRecord(components[id]);
+            const compType = comp?.componentType || COMPONENT_TYPES.PRIMITIVE;
             const compWidthValue = comp.size?.width || 80;
             const compHeightValue = comp.size?.height || 40;
 
             document.getElementById('compId').value = id;
             document.getElementById('compName').value = comp.name || '';
+            setSelectedComponentType(compType, { suppressDirty: true, componentDefault: comp.defaultValue });
             populatePrefixOptions(comp.designator?.prefix || getDefaultPrimitivePrefix());
-            document.getElementById('compPrefix').value = comp.designator?.prefix || getDefaultPrimitivePrefix();
+            document.getElementById('compPrefix').value = compType === COMPONENT_TYPES.SUBCIRCUIT
+                ? 'X'
+                : comp.designator?.prefix || getDefaultPrimitivePrefix();
             document.getElementById('compAutoInc').checked = comp.designator?.autoIncrement !== false;
-            applyPrimitiveDefaults(document.getElementById('compPrefix').value, { componentDefault: comp.defaultValue });
+
+            const defaultField = document.getElementById('compDefault');
+            if (compType === COMPONENT_TYPES.PRIMITIVE) {
+                applyPrimitiveDefaults(document.getElementById('compPrefix').value, { componentDefault: comp.defaultValue });
+            } else if (defaultField) {
+                defaultField.disabled = false;
+                defaultField.placeholder = '';
+                defaultField.value = comp.defaultValue ?? '';
+                defaultValueIsNull = comp.defaultValue === null;
+            }
+
+            if (compType === COMPONENT_TYPES.SUBCIRCUIT) {
+                setSubcircuitInputs(comp.subcircuit);
+            } else {
+                setSubcircuitInputs({ name: '', definition: '' });
+            }
             document.getElementById('compWidth').value = compWidthValue;
             document.getElementById('compHeight').value = compHeightValue;
 
@@ -2745,16 +2887,30 @@ import { deleteSymbol as deleteSymbolFromStore, loadLibrary, replaceLibrary, sav
             const compWidth = parseInt(document.getElementById('compWidth').value) || 80;
             const compHeight = parseInt(document.getElementById('compHeight').value) || 40;
             const labels = readLabelInputs(compWidth, compHeight);
+            const componentType = getSelectedComponentType();
+            const subcircuitDescriptor = componentType === COMPONENT_TYPES.SUBCIRCUIT ? readSubcircuitInputs() : null;
+
+            if (componentType === COMPONENT_TYPES.SUBCIRCUIT) {
+                const validation = validateSubcircuitDescriptor(subcircuitDescriptor, pins.length);
+                if (!validation.ok) {
+                    alert(validation.message);
+                    return;
+                }
+            }
 
             const normalizedModels = normalizeModelsArray(models);
 
-            const prefixValue = document.getElementById('compPrefix').value || id[0].toUpperCase();
+            const prefixValue = componentType === COMPONENT_TYPES.SUBCIRCUIT
+                ? 'X'
+                : document.getElementById('compPrefix').value || id[0].toUpperCase();
             const defaultField = document.getElementById('compDefault');
             const defaultValue = defaultValueIsNull ? null : (defaultField ? defaultField.value : '');
 
+            // Component JSON schema additions: componentType ('primitive' | 'subcircuit') and optional subcircuit { name, definition }
             const comp = {
                 name: document.getElementById('compName').value || id,
                 description: components[currentComponentId]?.description || '',
+                componentType,
                 defaultValue,
                 designator: {
                     prefix: prefixValue,
@@ -2777,6 +2933,11 @@ import { deleteSymbol as deleteSymbolFromStore, loadLibrary, replaceLibrary, sav
                 labels,
                 svg: elementsToSVG()
             };
+
+            if (componentType === COMPONENT_TYPES.SUBCIRCUIT) {
+                comp.designator.prefix = 'X';
+                comp.subcircuit = subcircuitDescriptor;
+            }
 
             // Preserve special flags
             if (components[currentComponentId]?.isGround) {
@@ -2820,6 +2981,7 @@ import { deleteSymbol as deleteSymbolFromStore, loadLibrary, replaceLibrary, sav
 
             document.getElementById('compId').value = '';
             document.getElementById('compName').value = '';
+            setSelectedComponentType(COMPONENT_TYPES.PRIMITIVE, { suppressDirty: true });
             const defaultPrefix = getDefaultPrimitivePrefix();
             populatePrefixOptions(defaultPrefix);
             document.getElementById('compPrefix').value = defaultPrefix;
@@ -2830,6 +2992,7 @@ import { deleteSymbol as deleteSymbolFromStore, loadLibrary, replaceLibrary, sav
             const defaultWidth = parseInt(document.getElementById('compWidth').value, 10) || 80;
             const defaultHeight = parseInt(document.getElementById('compHeight').value, 10) || 40;
             setLabelInputs(getDefaultLabelPositions(defaultWidth, defaultHeight), defaultWidth, defaultHeight);
+            setSubcircuitInputs({ name: '', definition: '' });
 
             updateComponentList();
             updatePinList();
@@ -2846,7 +3009,8 @@ import { deleteSymbol as deleteSymbolFromStore, loadLibrary, replaceLibrary, sav
             if (!currentComponentId) return;
 
             const newId = currentComponentId + '_copy';
-            components[newId] = JSON.parse(JSON.stringify(components[currentComponentId]));
+            const clone = JSON.parse(JSON.stringify(components[currentComponentId]));
+            components[newId] = normalizeComponentRecord(clone);
             components[newId].name += ' (Copy)';
 
             currentComponentId = newId;
@@ -2883,7 +3047,7 @@ import { deleteSymbol as deleteSymbolFromStore, loadLibrary, replaceLibrary, sav
 
         // JSON handling
         function updateJSON() {
-            normalizeModelFields(components);
+            normalizeComponents(components);
             document.getElementById('jsonOutput').value = JSON.stringify(components, null, '\t');
         }
 
@@ -2929,7 +3093,7 @@ import { deleteSymbol as deleteSymbolFromStore, loadLibrary, replaceLibrary, sav
             reader.onload = async function (e) {
                 try {
                     components = JSON.parse(e.target.result);
-                    normalizeModelFields(components);
+                    normalizeComponents(components);
                     currentComponentId = null;
                     dirtyComponents.clear();
                     try {

@@ -136,10 +136,25 @@
                     <input type="text" id="compName" placeholder="Resistor">
                 </div>
                 <div class="prop-row">
+                    <label>Type:</label>
+                    <div class="segmented">
+                        <label class="radio-inline"><input type="radio" name="compType" value="primitive" checked> Primitive</label>
+                        <label class="radio-inline"><input type="radio" name="compType" value="subcircuit"> Subcircuit</label>
+                    </div>
+                </div>
+                <div class="prop-row" id="prefixRow">
                     <label>Prefix:</label>
                     <select id="compPrefix" style="width: 70px;"></select>
                     <input type="checkbox" id="compAutoInc" checked>
                     <label for="compAutoInc" style="min-width: auto;">Auto #</label>
+                </div>
+                <div class="prop-row subckt-row" id="subcktNameRow">
+                    <label>Subckt Name:</label>
+                    <input type="text" id="compSubcktName" placeholder="XFMR_DUAL">
+                </div>
+                <div class="prop-row subckt-row" id="subcktDefRow">
+                    <label>Definition:</label>
+                    <textarea id="compSubcktDefinition" rows="5" placeholder=".subckt XFMR_DUAL p1 p2 s1 s2\n...\n.ends"></textarea>
                 </div>
                 <div class="prop-row">
                     <label>Default:</label>

@@ -101,6 +101,10 @@ export class SelectionManager {
         if (event.shiftKey) return false;
 
         const snapped = this.viewport.snapToGrid(worldX, worldY);
+        const labelHit = this.componentManager.findLabelHit ? this.componentManager.findLabelHit(snapped.x, snapped.y) : null;
+        if (labelHit) {
+            return false; // Let component manager handle label dragging
+        }
         const hitComponent = this.componentManager.getComponentAt(snapped.x, snapped.y);
         const hitSegment = this.wireGraph.getSegmentAt(snapped.x, snapped.y, this.wireEditor.segmentHitTolerance ?? 5);
         const hasSelection = this.selectedComponentIds.size > 0 || this.selectedSegmentIds.size > 0;
