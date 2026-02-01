@@ -486,7 +486,11 @@ export class NetlistGenerator {
         for (const component of this.componentManager.components) {
             const descriptor = component.meta?.definition?.subcircuit;
             const name = typeof descriptor?.name === 'string' ? descriptor.name.trim() : '';
-            const definition = typeof descriptor?.definition === 'string' ? descriptor.definition.trim() : '';
+            const rawDefinition = typeof descriptor?.definition === 'string' ? descriptor.definition.trim() : '';
+            const overridden = typeof component.meta?.customSubcircuitDefinition === 'string'
+                ? component.meta.customSubcircuitDefinition.trim()
+                : '';
+            const definition = overridden || rawDefinition;
             if (!name || !definition) continue;
             const key = `${name.toLowerCase()}::${definition.replace(/\s+/g, ' ').toLowerCase()}`;
             if (seen.has(key)) continue;

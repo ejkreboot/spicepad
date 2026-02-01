@@ -1,27 +1,11 @@
 * Standard ngspice init file
 alias exit quit
 alias acct rusage all
-set x11lineararcs
-*set rndseed=12
-** ascii rawfile **
-*set filetype=ascii
-** frontend debug output **
 *set ngdebug
-** asking after quit **
-*set askquit
-** set the number of threads in openmp
-** default (if compiled with --enable-openmp) is: 2
-*set num_threads=4
 
-strcmp __flag $program "ngspice"
-if $__flag = 0
-
-* codemodel /usr/local/lib/ngspice/spice2poly.cm
-* codemodel /usr/local/lib/ngspice/analog.cm
-* codemodel /usr/local/lib/ngspice/digital.cm
-* codemodel /usr/local/lib/ngspice/xtradev.cm
-* codemodel /usr/local/lib/ngspice/xtraevt.cm
-* codemodel /usr/local/lib/ngspice/table.cm
-
-end
-unset __flag
+codemodel /usr/local/lib/ngspice/spice2poly.cm
+codemodel /usr/local/lib/ngspice/analog.cm
+codemodel /usr/local/lib/ngspice/digital.cm
+codemodel /usr/local/lib/ngspice/xtradev.cm
+codemodel /usr/local/lib/ngspice/xtraevt.cm
+codemodel /usr/local/lib/ngspice/table.cm

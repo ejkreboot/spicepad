@@ -298,6 +298,11 @@
                     <label>Parameters</label>
                     <div id="component-subcircuit-args-container"></div>
                 </div>
+                <div class="modal-field" id="component-subcircuit-body-field" style="display: none;">
+                    <label for="component-subcircuit-body">Subcircuit Definition</label>
+                    <textarea id="component-subcircuit-body" rows="8" placeholder=".subckt NAME ...\n...\n.ends"></textarea>
+                    <small style="color: #64748b; display: block; margin-top: 4px;">Instance-local override. Include the full .subckt/.ends block.</small>
+                </div>
                 <div class="modal-field">
                     <label for="component-custom-model-input">Custom Model Statement (optional)</label>
                     <textarea id="component-custom-model-input" rows="3" placeholder=".model ..."></textarea>
@@ -306,6 +311,30 @@
             <div class="modal-actions">
                 <button class="btn btn-secondary" type="button" id="component-modal-cancel">Cancel</button>
                 <button class="btn btn-primary" type="button" id="component-modal-save">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="subcircuit-modal" aria-hidden="true">
+        <div class="modal modal-large" role="dialog" aria-modal="true" aria-labelledby="subcircuit-modal-title">
+            <div class="modal-header">
+                <h3 id="subcircuit-modal-title">Add Custom Subcircuit</h3>
+                <button class="btn btn-secondary modal-close" type="button" aria-label="Close">Close</button>
+            </div>
+            <div class="modal-body">
+                <div class="modal-field">
+                    <label for="subcircuit-text">SPICE Subcircuit Definition</label>
+                    <textarea id="subcircuit-text" rows="10" placeholder=".subckt NAME pins...
+* optional comments
+R1 a b 1k
+.ends NAME" style="font-family: 'Courier New', monospace; font-size: 13px; line-height: 1.4; resize: vertical;"></textarea>
+                    <div id="subcircuit-modal-error" style="color: #dc2626; font-size: 13px; margin-top: 6px; display: none;"></div>
+                </div>
+                <p style="color: #64748b; font-size: 13px; margin: 0;">Paste the full .subckt/.ends block. Pins will be mapped from the header order.</p>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" type="button" id="subcircuit-modal-cancel">Cancel</button>
+                <button class="btn btn-primary" type="button" id="subcircuit-modal-ok">Add Subcircuit</button>
             </div>
         </div>
     </div>

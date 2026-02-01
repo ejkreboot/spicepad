@@ -16,6 +16,7 @@ import { ComponentManager } from './ComponentManager.js';
 import { SelectionManager } from './SelectionManager.js';
 import { NetlistGenerator } from './NetlistGenerator.js';
 import { ProbeManager } from './ProbeManager.js';
+import { UndoManager, UNDO_TYPES } from './UndoManager.js';
 import { loadLibrary, replaceLibrary } from '../common/storage/library.js';
 import { DEFAULT_COMPONENT_LIBRARY } from '../common/defaultComponents.js';
 import { createComponentFromDefinition, Component } from './Component.js';
@@ -43,11 +44,13 @@ class CircuitEditorApp {
             wireGraph: this.wireGraph,
             componentManager: this.componentManager,
             wireEditor: this.wireEditor,
-            isSelectionEnabled: () => !this.wireEditor.isActive && !this.selectedComponentId && this._currentTool !== 'probe'
+            isSelectionEnabled: () => !this.wireEditor.isActive && !this.selectedComponentId && this._currentTool !== 'probe',
+            onGroupDragComplete: (moveData) => this._onGroupDragComplete(moveData)
         });
         this.netlistGenerator = new NetlistGenerator(this.componentManager, this.wireGraph);
         this.probeManager = new ProbeManager(this.viewport, this.wireGraph, this.componentManager);
         this.netlistGenerator.setProbeManager(this.probeManager);
+        this.undoManager = new UndoManager();
         this._componentCounter = 1;
         this._designatorCounters = new Map();
         this.componentLibrary = {};
@@ -57,6 +60,8 @@ class CircuitEditorApp {
         this._ghostDefinition = null;
         this._modalOpen = false;
         this._editingComponent = null;
+        this._subcircuitModalResolver = null;
+        this._subcircuitModalEls = null;
         this._autoSaveInterval = null;
         this._currentTool = 'select'; // Track current tool: 'select', 'wire', 'probe'
         this._plotCounter = 0; // Unique plot IDs
@@ -81,6 +86,9 @@ class CircuitEditorApp {
 
         // Component editor modal
         this._setupComponentEditor();
+
+        // Subcircuit entry modal
+        this._setupSubcircuitModal();
         
         // Netlist modal
         this._setupNetlistModal();
@@ -108,6 +116,9 @@ class CircuitEditorApp {
         
         // Setup auto-save
         this._setupAutoSave();
+        
+        // Setup results panel resize
+        this._setupResultsPanelResize();
         
         // Initial render
         this.viewport.render();
@@ -170,8 +181,38 @@ class CircuitEditorApp {
                 // Update active state
                 toolButtons.forEach(b => b.classList.remove('active'));
                 btn.classList.add('active');
+                
+                // Show/hide probe type selector based on tool
+                this._updateProbeTypeSelector(tool);
             });
         });
+        
+        // Probe type selector buttons
+        const probeTypeButtons = document.querySelectorAll('.probe-type-btn');
+        probeTypeButtons.forEach(btn => {
+            btn.addEventListener('click', () => {
+                const probeType = btn.dataset.probeType;
+                this.probeManager.setProbeType(probeType);
+                
+                // Update active state
+                probeTypeButtons.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                
+                // Re-render to show updated ghost preview
+                this.viewport.render();
+            });
+        });
+    }
+    
+    /**
+     * Show/hide the probe type selector based on the current tool
+     * @param {string} tool - The current tool name
+     */
+    _updateProbeTypeSelector(tool) {
+        const probeTypeSelector = document.getElementById('probe-type-selector');
+        if (probeTypeSelector) {
+            probeTypeSelector.style.display = tool === 'probe' ? 'inline-flex' : 'none';
+        }
     }
 
     async _loadComponentLibrary() {
@@ -181,10 +222,26 @@ class CircuitEditorApp {
             console.error('Failed to load component library', error);
             this.componentLibrary = { ...DEFAULT_COMPONENT_LIBRARY };
         }
+        this._ensureSubcircuitPlaceholder();
         this._renderComponentPanel();
-        const firstId = Object.keys(this.componentLibrary)[0] ?? null;
-        if (firstId) {
-            this._setSelectedComponent(firstId);
+        // Start with select tool active and no component selected
+        // Need to call _setTool to properly initialize tool state, but without clearing selection
+        this.wireEditor.setActive(false);
+        this.probeManager.setGhostPosition(null);
+        this.canvas.style.cursor = 'default';
+        this._updateToolButtons('select');
+    }
+
+    _ensureSubcircuitPlaceholder() {
+        const id = 'custom_subcircuit';
+        if (this.componentLibrary[id]) return;
+        const fallback = DEFAULT_COMPONENT_LIBRARY[id];
+        if (fallback) {
+            try {
+                this.componentLibrary[id] = JSON.parse(JSON.stringify(fallback));
+            } catch (error) {
+                this.componentLibrary[id] = { ...fallback };
+            }
         }
     }
 
@@ -215,6 +272,7 @@ class CircuitEditorApp {
 
                 await replaceLibrary(parsed);
 
+                this._ensureSubcircuitPlaceholder();
                 this._renderComponentPanel();
                 const firstId = Object.keys(parsed)[0] ?? null;
                 if (firstId) {
@@ -288,11 +346,6 @@ class CircuitEditorApp {
         list.querySelectorAll('.component-item').forEach(item => {
             item.classList.toggle('selected', item.dataset.componentId === componentId);
         });
-
-        if (componentId) {
-            this._setTool('select');
-            this._updateToolButtons('select');
-        }
     }
 
     _clearSelection() {
@@ -331,11 +384,15 @@ class CircuitEditorApp {
                 this.canvas.style.cursor = 'not-allowed';
                 break;
             case 'select':
+                this._clearSelection();
                 this.wireEditor.setActive(false);
                 this.probeManager.setGhostPosition(null);
                 this.canvas.style.cursor = 'default';
                 break;
         }
+        
+        // Update probe type selector visibility
+        this._updateProbeTypeSelector(toolName);
     }
     
     _setupKeyboard() {
@@ -346,6 +403,7 @@ class CircuitEditorApp {
             if (this._modalOpen) {
                 if (event.key === 'Escape') {
                     this._closeComponentModal();
+                    this._cancelSubcircuitModal();
                 }
                 return;
             }
@@ -368,6 +426,17 @@ class CircuitEditorApp {
                 return;
             }
             
+            // Cmd/Ctrl + Z for undo, Cmd/Ctrl + Shift + Z for redo
+            if (event.key === 'z' && (event.metaKey || event.ctrlKey)) {
+                event.preventDefault();
+                if (event.shiftKey) {
+                    this._redo();
+                } else {
+                    this._undo();
+                }
+                return;
+            }
+            
             // Let wire editor handle first
             if (this.wireEditor.handleKeyDown(event)) {
                 this.viewport.render();
@@ -380,7 +449,7 @@ class CircuitEditorApp {
                     if (!event.ctrlKey && !event.metaKey) {
                         const mouse = this.viewport.getMouseWorld();
                         const snapped = this.viewport.snapToGrid(mouse.x, mouse.y);
-                        this._placeSelectedComponent(snapped);
+					void this._placeSelectedComponent(snapped);
                     }
                     break;
                 case 'w':
@@ -459,8 +528,14 @@ class CircuitEditorApp {
         
         // Delete selected probe
         if (this.probeManager.selectedProbeId) {
-            this.probeManager.removeProbe(this.probeManager.selectedProbeId);
-            deleted = true;
+            const probe = this.probeManager.probes.find(p => p.id === this.probeManager.selectedProbeId);
+            if (probe) {
+                this.undoManager.recordAction(UNDO_TYPES.DELETE_PROBE, {
+                    probe: { ...probe }
+                });
+                this.probeManager.removeProbe(probe.id);
+                deleted = true;
+            }
         }
         
         // Delete selected components and wires via SelectionManager
@@ -485,6 +560,9 @@ class CircuitEditorApp {
         // Check for probe first
         const probe = this.probeManager.getProbeAt(worldX, worldY);
         if (probe) {
+            this.undoManager.recordAction(UNDO_TYPES.DELETE_PROBE, {
+                probe: { ...probe }
+            });
             this.probeManager.removeProbe(probe.id);
             deleted = true;
         }
@@ -493,7 +571,17 @@ class CircuitEditorApp {
         if (!deleted) {
             const component = this.componentManager.getComponentAt(worldX, worldY);
             if (component) {
+                // Record full state before deletion to preserve wire connections
+                this.undoManager.recordAction(UNDO_TYPES.FULL_STATE, {
+                    stateBefore: this._serialize(),
+                    description: 'Delete component'
+                });
                 this.componentManager.removeComponent(component.id);
+                // Record state after for redo
+                const lastAction = this.undoManager.undoStack[this.undoManager.undoStack.length - 1];
+                if (lastAction) {
+                    lastAction.data.stateAfter = this._serialize();
+                }
                 deleted = true;
             }
         }
@@ -502,6 +590,17 @@ class CircuitEditorApp {
         if (!deleted) {
             const segmentHit = this.wireGraph.getSegmentAt(worldX, worldY, this.wireEditor.segmentHitTolerance ?? 5);
             if (segmentHit) {
+                const segment = segmentHit.segment;
+                const node1 = this.wireGraph.getNode(segment.nodeId1);
+                const node2 = this.wireGraph.getNode(segment.nodeId2);
+                this.undoManager.recordAction(UNDO_TYPES.DELETE_WIRE_SEGMENT, {
+                    segment: {
+                        nodeId1: segment.nodeId1,
+                        nodeId2: segment.nodeId2,
+                        node1: { x: node1?.x, y: node1?.y },
+                        node2: { x: node2?.x, y: node2?.y }
+                    }
+                });
                 this.wireGraph.removeSegment(segmentHit.segment.nodeId1, segmentHit.segment.nodeId2);
                 this.wireGraph.cleanup();
                 deleted = true;
@@ -515,8 +614,9 @@ class CircuitEditorApp {
     }
 
     _setupComponentEditor() {
+        // Component modal
         const overlay = document.getElementById('component-modal');
-        const closeBtn = document.querySelector('.modal-close');
+        const closeBtn = document.querySelector('#component-modal .modal-close');
         const cancelBtn = document.getElementById('component-modal-cancel');
         const saveBtn = document.getElementById('component-modal-save');
 
@@ -531,6 +631,24 @@ class CircuitEditorApp {
         closeBtn?.addEventListener('click', () => this._closeComponentModal());
         cancelBtn?.addEventListener('click', () => this._closeComponentModal());
         saveBtn?.addEventListener('click', () => this._saveComponentModal());
+        
+        // Probe modal
+        const probeOverlay = document.getElementById('probe-modal');
+        const probeCloseBtn = document.querySelector('#probe-modal .modal-close');
+        const probeCancelBtn = document.getElementById('probe-modal-cancel');
+        const probeSaveBtn = document.getElementById('probe-modal-save');
+        
+        if (probeOverlay) {
+            probeOverlay.addEventListener('click', (event) => {
+                if (event.target === probeOverlay) {
+                    this._closeProbeModal();
+                }
+            });
+        }
+        
+        probeCloseBtn?.addEventListener('click', () => this._closeProbeModal());
+        probeCancelBtn?.addEventListener('click', () => this._closeProbeModal());
+        probeSaveBtn?.addEventListener('click', () => this._saveProbeModal());
 
         this.canvas.addEventListener('dblclick', (event) => {
             if (this._modalOpen) return;
@@ -555,11 +673,80 @@ class CircuitEditorApp {
     }
     
     _editProbeLabel(probe) {
-        const newLabel = prompt('Enter probe label:', probe.label);
-        if (newLabel !== null && newLabel.trim() !== '') {
-            this.probeManager.updateProbeLabel(probe.id, newLabel.trim());
-            this._saveToLocalStorage();
+        this._openProbeModal(probe);
+    }
+    
+    _openProbeModal(probe) {
+        const modal = document.getElementById('probe-modal');
+        const input = document.getElementById('probe-label-input');
+        const typeSelect = document.getElementById('probe-type-select');
+        const colorInput = document.getElementById('probe-color-input');
+        if (!modal || !input || !typeSelect || !colorInput) return;
+        
+        this._editingProbe = probe;
+        input.value = probe.label;
+        typeSelect.value = probe.type || 'voltage';
+        colorInput.value = probe.color || '#3b82f6';
+        
+        modal.classList.add('is-open');
+        modal.setAttribute('aria-hidden', 'false');
+        this._modalOpen = true;
+        
+        // Focus input and select text
+        setTimeout(() => {
+            input.focus();
+            input.select();
+        }, 100);
+        
+        // Allow Enter key to save
+        const handleEnter = (e) => {
+            if (e.key === 'Enter') {
+                this._saveProbeModal();
+                input.removeEventListener('keydown', handleEnter);
+            }
+        };
+        input.addEventListener('keydown', handleEnter);
+    }
+    
+    _closeProbeModal() {
+        const modal = document.getElementById('probe-modal');
+        if (modal) {
+            modal.classList.remove('is-open');
+            modal.setAttribute('aria-hidden', 'true');
         }
+        this._modalOpen = false;
+        this._editingProbe = null;
+    }
+    
+    _saveProbeModal() {
+        const input = document.getElementById('probe-label-input');
+        const typeSelect = document.getElementById('probe-type-select');
+        const colorInput = document.getElementById('probe-color-input');
+        if (!input || !typeSelect || !colorInput || !this._editingProbe) {
+            this._closeProbeModal();
+            return;
+        }
+        
+        const newLabel = input.value.trim();
+        if (newLabel === '') {
+            alert('Probe name cannot be empty.');
+            return;
+        }
+        
+        // Check if the new label is unique
+        if (!this.probeManager.isProbeLabelUnique(newLabel, this._editingProbe.id)) {
+            alert(`The name "${newLabel}" is already in use. Please choose a unique name.`);
+            return;
+        }
+        
+        const newType = typeSelect.value;
+        const newColor = colorInput.value;
+        
+        this.probeManager.updateProbeLabel(this._editingProbe.id, newLabel);
+        this.probeManager.updateProbeType(this._editingProbe.id, newType);
+        this.probeManager.updateProbeColor(this._editingProbe.id, newColor);
+        this._saveToLocalStorage();
+        this._closeProbeModal();
     }
 
     _normalizeDefinitionModels(definition) {
@@ -622,6 +809,334 @@ class CircuitEditorApp {
         return { name: tokens[1], params };
     }
 
+    _splitSubcircuitDefinition(definition = '', fallbackName = 'SUB') {
+        const lines = (typeof definition === 'string' ? definition : '').split(/\r?\n/);
+        const trimmed = lines.map(line => line.replace(/\s+$/u, ''));
+        const headerIndex = trimmed.findIndex(line => line && !line.startsWith('*') && /^\.subckt/i.test(line));
+        const endsIndex = (() => {
+            for (let i = trimmed.length - 1; i >= 0; i -= 1) {
+                if (/^\.ends\b/i.test(trimmed[i].trim())) return i;
+            }
+            return -1;
+        })();
+
+        const headerName = this._parseSubcircuitHeader(definition).name || fallbackName;
+        const headerLine = headerIndex >= 0 ? trimmed[headerIndex] : `.subckt ${headerName}`;
+        const endsLine = endsIndex >= 0 ? trimmed[endsIndex] : `.ends ${headerName}`;
+
+        const bodyStart = headerIndex >= 0 ? headerIndex + 1 : 0;
+        const bodyEnd = endsIndex >= 0 ? endsIndex : trimmed.length;
+        const bodyLines = trimmed
+            .slice(bodyStart, bodyEnd)
+            .filter(line => line && !/^\.subckt/i.test(line.trim()) && !/^\.ends\b/i.test(line.trim()));
+
+        const prefix = headerIndex > 0 ? trimmed.slice(0, headerIndex).filter(Boolean) : [];
+        const suffix = endsIndex >= 0 && endsIndex < trimmed.length - 1
+            ? trimmed.slice(endsIndex + 1).filter(Boolean)
+            : [];
+
+        return {
+            header: headerLine,
+            ends: endsLine,
+            bodyLines,
+            prefix,
+            suffix,
+            name: headerName
+        };
+    }
+
+    _setupSubcircuitModal() {
+        const modal = document.getElementById('subcircuit-modal');
+        const textarea = document.getElementById('subcircuit-text');
+        const okBtn = document.getElementById('subcircuit-modal-ok');
+        const cancelBtn = document.getElementById('subcircuit-modal-cancel');
+        const closeBtn = modal?.querySelector('.modal-close');
+        const errorEl = document.getElementById('subcircuit-modal-error');
+
+        if (!modal || !textarea || !okBtn || !cancelBtn || !errorEl) return;
+
+        this._subcircuitModalEls = { modal, textarea, okBtn, cancelBtn, errorEl };
+
+        okBtn.addEventListener('click', () => this._handleSubcircuitSubmit());
+        cancelBtn.addEventListener('click', () => this._cancelSubcircuitModal());
+        closeBtn?.addEventListener('click', () => this._cancelSubcircuitModal());
+    }
+
+    _promptSubcircuitDefinition() {
+        if (!this._subcircuitModalEls) {
+            // Fallback for environments where the modal markup is unavailable
+            const text = window.prompt('Paste a .subckt definition to create this subcircuit:');
+            if (!text) return Promise.resolve(null);
+            try {
+                const parsed = this._parseUserSubcircuitInput(text);
+                return Promise.resolve(parsed);
+            } catch (error) {
+                alert(error?.message || 'Invalid subcircuit definition.');
+                return Promise.resolve(null);
+            }
+        }
+
+        this._subcircuitModalEls.textarea.value = '';
+        this._setSubcircuitError('');
+        this._subcircuitModalEls.modal.classList.add('is-open');
+        this._subcircuitModalEls.modal.setAttribute('aria-hidden', 'false');
+        this._modalOpen = true;
+
+        return new Promise((resolve) => {
+            this._subcircuitModalResolver = resolve;
+            setTimeout(() => this._subcircuitModalEls?.textarea?.focus(), 0);
+        });
+    }
+
+    _handleSubcircuitSubmit() {
+        if (!this._subcircuitModalEls) return;
+        const raw = this._subcircuitModalEls.textarea.value;
+        try {
+            const parsed = this._parseUserSubcircuitInput(raw);
+            this._finishSubcircuitModal(parsed);
+        } catch (error) {
+            this._setSubcircuitError(error?.message || 'Invalid subcircuit definition.');
+        }
+    }
+
+    _finishSubcircuitModal(result) {
+        if (this._subcircuitModalEls?.modal) {
+            this._subcircuitModalEls.modal.classList.remove('is-open');
+            this._subcircuitModalEls.modal.setAttribute('aria-hidden', 'true');
+        }
+        this._modalOpen = false;
+        const resolver = this._subcircuitModalResolver;
+        this._subcircuitModalResolver = null;
+        resolver?.(result || null);
+    }
+
+    _cancelSubcircuitModal() {
+        if (this._subcircuitModalResolver) {
+            this._finishSubcircuitModal(null);
+        } else if (this._subcircuitModalEls?.modal?.classList.contains('is-open')) {
+            this._finishSubcircuitModal(null);
+        }
+    }
+
+    _setSubcircuitError(message = '') {
+        if (!this._subcircuitModalEls?.errorEl) return;
+        if (message) {
+            this._subcircuitModalEls.errorEl.textContent = message;
+            this._subcircuitModalEls.errorEl.style.display = 'block';
+        } else {
+            this._subcircuitModalEls.errorEl.textContent = '';
+            this._subcircuitModalEls.errorEl.style.display = 'none';
+        }
+    }
+
+    _parseUserSubcircuitInput(text = '') {
+        const trimmed = (text || '').trim();
+        if (!trimmed) {
+            throw new Error('Paste a .subckt definition to continue.');
+        }
+
+        const lines = trimmed.split(/\r?\n/).map((line) => line.replace(/\s+$/u, ''));
+        const headerLine = lines
+            .map(line => line.trim())
+            .find(line => line && !line.startsWith('*') && /^\.subckt/i.test(line));
+
+        if (!headerLine) {
+            throw new Error('Missing .subckt line. Start your block with ".subckt NAME pin1 pin2 ...".');
+        }
+
+        const tokens = headerLine.split(/\s+/).filter(Boolean);
+        if (tokens.length < 3) {
+            throw new Error('The .subckt line must include a name and at least one pin.');
+        }
+
+        const name = tokens[1];
+        const pins = [];
+        let collectingParams = false;
+        for (let i = 2; i < tokens.length; i += 1) {
+            const token = tokens[i];
+            const lowered = token.toLowerCase();
+            if (lowered === 'params:' || lowered === 'param:' || lowered === 'par:') {
+                collectingParams = true;
+                continue;
+            }
+            if (collectingParams || token.includes('=')) {
+                collectingParams = true;
+                continue;
+            }
+            pins.push({ id: String(pins.length + 1), name: token });
+        }
+
+        if (pins.length === 0) {
+            throw new Error('No pins were detected on the .subckt line. Add pins after the name.');
+        }
+
+        const hasEnds = lines.some(line => /^\.ends\b/i.test(line.trim()));
+        if (!hasEnds) {
+            lines.push(`.ends ${name}`);
+        }
+
+        return {
+            name,
+            pins,
+            definitionText: lines.join('\n')
+        };
+    }
+
+    _ensureUniqueSubcircuitName(name, definitionText = '') {
+        const baseName = name && name.trim() ? name.trim() : 'SUB';
+        const normalizedDefinition = (definitionText || '').trim().toLowerCase().replace(/\s+/g, ' ');
+
+        const existingNames = new Set();
+        let needsRename = false;
+        let sameDefinitionExists = false;
+
+        const checkEntry = (entryName, entryDefinition) => {
+            if (!entryName) return;
+            const key = entryName.toLowerCase();
+            existingNames.add(key);
+            if (key === baseName.toLowerCase()) {
+                const normalized = (entryDefinition || '').trim().toLowerCase().replace(/\s+/g, ' ');
+                if (normalized === normalizedDefinition) {
+                    sameDefinitionExists = true;
+                } else {
+                    needsRename = true;
+                }
+            }
+        };
+
+        // Existing placed components
+        for (const component of this.componentManager.components) {
+            const sub = component.meta?.definition?.subcircuit;
+            if (sub?.name) {
+                checkEntry(sub.name, sub.definition);
+            }
+        }
+
+        // Definitions in the library
+        Object.values(this.componentLibrary || {}).forEach(def => {
+            if (def?.componentType === 'subcircuit' && def.subcircuit?.name) {
+                checkEntry(def.subcircuit.name, def.subcircuit.definition);
+            }
+        });
+
+        if (!needsRename) {
+            if (sameDefinitionExists || !existingNames.has(baseName.toLowerCase())) {
+                return { name: baseName, definitionText };
+            }
+        }
+
+        let suffix = 1;
+        let candidate = `${baseName}_${suffix}`;
+        while (existingNames.has(candidate.toLowerCase())) {
+            suffix += 1;
+            candidate = `${baseName}_${suffix}`;
+        }
+
+        const rewritten = this._rewriteSubcircuitName(definitionText, candidate);
+        return { name: candidate, definitionText: rewritten };
+    }
+
+    _rewriteSubcircuitName(definitionText = '', newName) {
+        if (!definitionText || !newName) return definitionText;
+        const lines = definitionText.split(/\r?\n/);
+        let hasEnds = false;
+        const rewritten = lines.map((line) => {
+            const trimmed = line.trim();
+            if (/^\.subckt/i.test(trimmed)) {
+				const leading = line.match(/^\s*/)?.[0] ?? '';
+				const parts = trimmed.split(/\s+/);
+				if (parts.length >= 2) {
+					parts[1] = newName;
+				}
+				return `${leading}${parts.join(' ')}`;
+            }
+            if (/^\.ends/i.test(trimmed)) {
+                hasEnds = true;
+                return `.ends ${newName}`;
+            }
+            return line;
+        });
+        if (!hasEnds) {
+            rewritten.push(`.ends ${newName}`);
+        }
+        return rewritten.join('\n');
+    }
+
+    _buildDynamicSubcircuitDefinition({ name, pins, definitionText }) {
+        const grid = this.viewport?.gridSize ?? 10;
+        const pinSpacing = Math.ceil(Math.max(grid * 2, 20) / grid) * grid;
+        const leftCount = Math.ceil(pins.length / 2);
+        const rightCount = Math.floor(pins.length / 2);
+        const maxSide = Math.max(leftCount, rightCount, 1);
+
+        let height = Math.max(grid * 4, pinSpacing * (maxSide - 1) + grid * 2);
+        height = Math.ceil(height / grid) * grid;
+        const available = height - pinSpacing * (maxSide - 1);
+        const topPadding = Math.max(grid, Math.round((available / 2) / grid) * grid);
+
+        const labelInset = Math.max(4, Math.round(grid * 0.6));
+        const pinRegionStart = topPadding;
+        const pinRegionEnd = topPadding + pinSpacing * (maxSide - 1);
+        const pinRegionCenter = pinRegionStart + (pinRegionEnd - pinRegionStart) / 2;
+        const valueLabelYOffset = Math.min(Math.round(grid * 1.2), Math.round(pinSpacing * 0.35));
+
+        let width = Math.max(80, grid * 6);
+        width = Math.ceil(width / grid) * grid;
+        const pinDefs = [];
+        let idx = 0;
+        for (let i = 0; i < leftCount; i += 1) {
+            const pin = pins[idx++];
+            const y = topPadding + i * pinSpacing;
+            pinDefs.push({
+                id: pin.id || String(idx),
+                name: pin.name,
+                position: { x: 0, y },
+                labelPosition: { x: labelInset, y }
+            });
+        }
+        for (let i = 0; i < rightCount; i += 1) {
+            const pin = pins[idx++];
+            const y = topPadding + i * pinSpacing;
+            pinDefs.push({
+                id: pin.id || String(idx),
+                name: pin.name,
+                position: { x: width, y },
+                labelPosition: { x: width - labelInset, y }
+            });
+        }
+
+        const definitionId = `custom_subcircuit:${name}-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`;
+
+        return {
+            definitionId,
+            definition: {
+                name,
+                description: 'User-defined subcircuit',
+                componentType: 'subcircuit',
+                dynamicSubcircuit: true,
+                allowRotation: false,
+                designator: { prefix: 'X', autoIncrement: true },
+                size: { width, height },
+                pins: pinDefs,
+                labels: {
+                    designator: [
+                        { x: width / 2, y: height + 8 },
+                        { x: width / 2, y: height + 8 }
+                    ],
+                    value: [
+                        { x: width / 2, y: pinRegionCenter - valueLabelYOffset },
+                        { x: width / 2, y: pinRegionCenter - valueLabelYOffset }
+                    ]
+                },
+                svg: null,
+                subcircuit: {
+                    name,
+                    definition: definitionText
+                }
+            }
+        };
+    }
+
     _openComponentModal(component) {
         const overlay = document.getElementById('component-modal');
         const labelInput = document.getElementById('component-label-input');
@@ -631,9 +1146,12 @@ class CircuitEditorApp {
         const valueInput = document.getElementById('component-value-input');
         const subcktArgsField = document.getElementById('component-subcircuit-args-field');
         const subcktArgsContainer = document.getElementById('component-subcircuit-args-container');
+		const subcktBodyField = document.getElementById('component-subcircuit-body-field');
+		const subcktBodyInput = document.getElementById('component-subcircuit-body');
         const customModelInput = document.getElementById('component-custom-model-input');
+		const customModelField = customModelInput?.closest('.modal-field');
 
-        if (!overlay || !labelInput || !modelField || !modelSelect || !valueField || !valueInput || !customModelInput || !subcktArgsField || !subcktArgsContainer) return;
+		if (!overlay || !labelInput || !modelField || !modelSelect || !valueField || !valueInput || !customModelInput || !subcktArgsField || !subcktArgsContainer) return;
 
         const definition = component.meta?.definition;
         const isSubcircuit = definition?.componentType === 'subcircuit';
@@ -649,6 +1167,7 @@ class CircuitEditorApp {
         if (isSubcircuit) {
             modelField.style.display = 'none';
             modelSelect.innerHTML = '';
+            if (customModelField) customModelField.style.display = 'none';
         } else if (models.length > 0) {
             modelField.style.display = 'flex';
             modelSelect.innerHTML = '';
@@ -668,6 +1187,11 @@ class CircuitEditorApp {
         } else {
             modelField.style.display = 'none';
             modelSelect.innerHTML = '';
+            if (customModelField) customModelField.style.display = 'flex';
+        }
+
+        if (!isSubcircuit && customModelField) {
+            customModelField.style.display = 'flex';
         }
 
         const customModel = component.meta?.customModelStatement?.trim() ||
@@ -723,6 +1247,18 @@ class CircuitEditorApp {
             subcktArgsContainer.innerHTML = '';
         }
 
+        if (isSubcircuit && subcktBodyField && subcktBodyInput) {
+            const baseDefinition = definition?.subcircuit?.definition || '';
+            const overrideDefinition = component.meta?.customSubcircuitDefinition || '';
+            const effectiveDefinition = overrideDefinition || baseDefinition;
+            const split = this._splitSubcircuitDefinition(effectiveDefinition, definition?.subcircuit?.name || 'SUBCKT');
+            subcktBodyField.style.display = 'flex';
+            subcktBodyInput.value = split.bodyLines.join('\n');
+        } else if (subcktBodyField && subcktBodyInput) {
+            subcktBodyField.style.display = 'none';
+            subcktBodyInput.value = '';
+        }
+
         overlay.classList.add('is-open');
         overlay.setAttribute('aria-hidden', 'false');
         this._modalOpen = true;
@@ -753,6 +1289,7 @@ class CircuitEditorApp {
         const valueField = document.getElementById('component-value-field');
         const valueInput = document.getElementById('component-value-input');
         const subcktArgsContainer = document.getElementById('component-subcircuit-args-container');
+        const subcktBodyInput = document.getElementById('component-subcircuit-body');
         const customModelInput = document.getElementById('component-custom-model-input');
 
         if (!labelInput || !modelField || !modelSelect || !valueField || !valueInput || !customModelInput) {
@@ -799,6 +1336,31 @@ class CircuitEditorApp {
             this._editingComponent.meta.subcircuitArgs = null;
         }
 
+        if (isSubcircuit && subcktBodyInput) {
+            const baseDefinition = this._editingComponent.meta?.definition?.subcircuit?.definition || '';
+            const parsed = this._parseSubcircuitHeader(baseDefinition);
+            const split = this._splitSubcircuitDefinition(baseDefinition, parsed.name || this._editingComponent.meta?.definition?.subcircuit?.name || 'SUB');
+            const sanitizedBody = subcktBodyInput.value
+                .split(/\r?\n/)
+                .map(line => line.replace(/\s+$/u, ''))
+                .filter(line => line && !/^\.subckt/i.test(line.trim()) && !/^\.ends\b/i.test(line.trim()));
+
+            if (sanitizedBody.length > 0) {
+                const rebuilt = [
+                    ...split.prefix,
+                    split.header,
+                    ...sanitizedBody,
+                    split.ends,
+                    ...split.suffix
+                ].filter(Boolean).join('\n');
+                this._editingComponent.meta.customSubcircuitDefinition = rebuilt;
+            } else {
+                this._editingComponent.meta.customSubcircuitDefinition = null;
+            }
+        } else {
+            this._editingComponent.meta.customSubcircuitDefinition = null;
+        }
+
         this.viewport.render();
         this._closeComponentModal();
     }
@@ -807,6 +1369,11 @@ class CircuitEditorApp {
         const originalOnClick = this.viewport.onClick;
         this.viewport.onClick = (worldX, worldY, event) => {
             if (this.wireEditor.isActive) {
+                originalOnClick?.(worldX, worldY, event);
+                return;
+            }
+
+            if (this._modalOpen) {
                 originalOnClick?.(worldX, worldY, event);
                 return;
             }
@@ -842,7 +1409,7 @@ class CircuitEditorApp {
 
             const hit = this.componentManager.getComponentAt(snapped.x, snapped.y);
             if (!hit) {
-                this._placeSelectedComponent(snapped);
+                void this._placeSelectedComponent(snapped);
             }
 
             originalOnClick?.(worldX, worldY, event);
@@ -941,30 +1508,69 @@ class CircuitEditorApp {
         return this._ghostComponent;
     }
 
-    _placeSelectedComponent(position) {
+    async _placeSelectedComponent(position) {
         const definitionId = this.selectedComponentId;
-        const definition = this.componentLibrary[definitionId];
-        if (!definition) return;
+        const baseDefinition = this.componentLibrary[definitionId];
+        if (!baseDefinition) return;
 
-        const instanceId = `${definitionId}-${this._componentCounter++}`;
-        const designatorText = this._nextDesignator(definition.designator);
-        const valueText = definition.componentType === 'subcircuit' ? null : definition.defaultValue ?? null;
+        let resolvedDefinition = baseDefinition;
+        let resolvedDefinitionId = definitionId;
+
+        if (baseDefinition.dynamicSubcircuit) {
+            const userInput = await this._promptSubcircuitDefinition();
+            if (!userInput) return;
+            const { name, pins, definitionText } = userInput;
+            const uniqueness = this._ensureUniqueSubcircuitName(name, definitionText);
+            const built = this._buildDynamicSubcircuitDefinition({
+                name: uniqueness.name,
+                pins,
+                definitionText: uniqueness.definitionText
+            });
+            resolvedDefinition = built.definition;
+            resolvedDefinitionId = built.definitionId;
+        }
+
+        const instanceId = `${resolvedDefinitionId}-${this._componentCounter++}`;
+        const designatorTemplate = resolvedDefinition.designator
+            || baseDefinition.designator
+            || (resolvedDefinition.componentType === 'subcircuit' ? { prefix: 'X', autoIncrement: true } : null);
+        const designatorText = this._nextDesignator(designatorTemplate);
+        const valueText = resolvedDefinition.componentType === 'subcircuit' ? null : resolvedDefinition.defaultValue ?? null;
 
         const component = createComponentFromDefinition({
             instanceId,
-            definitionId,
-            definition,
+            definitionId: resolvedDefinitionId,
+            definition: resolvedDefinition,
             position,
             designatorText,
             valueText
         });
-        
+		
         // Inherit rotation from ghost component if present
         if (this._ghostComponent) {
             component.rotation = this._ghostComponent.rotation || 0;
         }
-        
+
+        // Dynamic subcircuits should not rotate
+        if (resolvedDefinition.dynamicSubcircuit) {
+            component.meta.dynamicSubcircuit = true;
+            component.meta.allowRotation = resolvedDefinition.allowRotation ?? false;
+            component.rotation = 0;
+        }
+		
+        // Record full state before adding component
+        this.undoManager.recordAction(UNDO_TYPES.FULL_STATE, {
+            stateBefore: this._serialize(),
+            description: 'Add component'
+        });
+		
         this.componentManager.addComponent(component);
+		
+        // Record state after for redo
+        const lastAction = this.undoManager.undoStack[this.undoManager.undoStack.length - 1];
+        if (lastAction) {
+            lastAction.data.stateAfter = this._serialize();
+        }
     }
 
     _nextDesignator(designator) {
@@ -1326,6 +1932,26 @@ class CircuitEditorApp {
             });
         }
 
+        // Console copy button
+        const consoleCopyBtn = document.getElementById('console-copy-btn');
+        if (consoleCopyBtn) {
+            consoleCopyBtn.addEventListener('click', () => {
+                const consoleOutput = document.getElementById('sim-log');
+                if (consoleOutput) {
+                    navigator.clipboard.writeText(consoleOutput.textContent).then(() => {
+                        const icon = consoleCopyBtn.querySelector('.material-symbols-outlined');
+                        const originalIcon = icon.textContent;
+                        icon.textContent = 'check';
+                        setTimeout(() => {
+                            icon.textContent = originalIcon;
+                        }, 1500);
+                    }).catch(err => {
+                        console.error('Failed to copy:', err);
+                    });
+                }
+            });
+        }
+
         if (this.spiceRunBtn) {
             this.spiceRunBtn.addEventListener('click', () => this._runNgspiceSimulation());
         }
@@ -1349,6 +1975,15 @@ class CircuitEditorApp {
 
     _runNgspiceSimulation() {
         if (!this.spiceRunBtn || !this.spiceStatusEl || !this.spiceOutputEl) return;
+
+        const probeCount = this.probeManager?.probes?.length ?? 0;
+        if (probeCount === 0) {
+            const message = 'Place at least one probe before running the simulation.';
+            this._setRunStatus('error', message);
+            this._appendRunOutput(`[note] ${message}`);
+            alert(message);
+            return;
+        }
 
         const directives = (this.simulationDirectives && this.simulationDirectives.length > 0)
             ? this.simulationDirectives
@@ -1613,16 +2248,40 @@ class CircuitEditorApp {
             </div>
         ` : '';
         
+        // Add X-Y plot mode toggle for transient and DC analyses
+        const showXYMode = (analysisType === 'tran' || analysisType === 'dc');
+        const xyModeToggle = showXYMode ? `
+            <div class="plot-mode-toggle">
+                <button class="mode-btn active" data-mode="standard">Standard</button>
+                <button class="mode-btn" data-mode="xy">X-Y</button>
+            </div>
+        ` : '';
+        
+        const xySelectors = showXYMode ? `
+            <div class="plot-xy-selectors" style="display: none;">
+                <span class="xy-selector-label">X-axis:</span>
+                <select class="xy-axis-select" data-axis="x" title="X-axis signal">
+                    <option value="">Select signal...</option>
+                </select>
+                <span class="xy-selector-label">Y-axis:</span>
+                <select class="xy-axis-select" data-axis="y" title="Y-axis signal">
+                    <option value="">Select signal...</option>
+                </select>
+            </div>
+        ` : '';
+        
         container.innerHTML = `
             <div class="plot-header">
                 <div class="plot-title">${titleText}</div>
                 <div class="plot-actions">
                     ${scaleToggle}
+                    ${xyModeToggle}
                     <button class="plot-export-btn" title="Download as PNG">
                         <span class="material-symbols-outlined">download</span>
                     </button>
                 </div>
             </div>
+            ${xySelectors}
             <div class="plot-area" id="plot-area-${id}"></div>
         `;
         
@@ -1639,6 +2298,46 @@ class CircuitEditorApp {
                 });
             }
         });
+        
+        // Setup X-Y mode toggle
+        if (showXYMode) {
+            const modeButtons = container.querySelectorAll('.mode-btn');
+            const xySelectors = container.querySelector('.plot-xy-selectors');
+            
+            modeButtons.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    modeButtons.forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    const mode = btn.dataset.mode;
+                    
+                    if (mode === 'xy') {
+                        xySelectors.style.display = 'flex';
+                        // Re-render in X-Y mode if data is available
+                        if (container._signalData) {
+                            this._updateXYPlot(container);
+                        }
+                    } else {
+                        xySelectors.style.display = 'none';
+                        // Re-render in standard mode
+                        if (container._signalData) {
+                            this._renderStandardPlot(
+                                container.querySelector('.plot-area'),
+                                container._signalData,
+                                container._analysisType
+                            );
+                        }
+                    }
+                });
+            });
+            
+            // Setup axis selector change handlers
+            const axisSelects = container.querySelectorAll('.xy-axis-select');
+            axisSelects.forEach(select => {
+                select.addEventListener('change', () => {
+                    this._updateXYPlot(container);
+                });
+            });
+        }
         
         this.spicePlotsEl.appendChild(container);
         return container.querySelector('.plot-area');
@@ -1858,7 +2557,10 @@ class CircuitEditorApp {
             layout.height = rect.height || 260;
             
             try {
-                window.Plotly.newPlot(plotArea, traces, layout, { responsive: true });
+                window.Plotly.newPlot(plotArea, traces, layout, { 
+                    responsive: true,
+                    modeBarButtonsToRemove: ['pan2d', 'zoomIn2d', 'zoomOut2d', 'autoScale2d']
+                });
             } catch (err) {
                 console.error('[AC Plot] Plotly.newPlot error:', err);
             }
@@ -1875,6 +2577,7 @@ class CircuitEditorApp {
     _plotTimeDomainResults(lines, probeInfo, analysisType, plotArea) {
         const xValues = [];
         const signals = {};
+        const signalMeta = [];
         const signalColors = {};
 
         const firstLine = lines.find(l => l.trim().length > 0);
@@ -1900,12 +2603,13 @@ class CircuitEditorApp {
         const inferredSignalCount = usePairedFormat ? Math.floor(firstParts.length / 2) : (firstParts.length - 1);
         const signalCount = probeInfo?.length > 0 ? Math.max(probeInfo.length, inferredSignalCount) : inferredSignalCount;
 
-        const labels = [];
         for (let i = 0; i < signalCount; i++) {
             const label = probeInfo?.[i]?.label || `Signal ${i + 1}`;
-            labels.push(label);
-            if (probeInfo?.[i]?.color) {
-                signalColors[label] = probeInfo[i].color;
+            const type = probeInfo?.[i]?.type || 'voltage';
+            const color = probeInfo?.[i]?.color;
+            signalMeta.push({ label, type, color });
+            if (color) {
+                signalColors[label] = color;
             }
         }
 
@@ -1926,7 +2630,7 @@ class CircuitEditorApp {
                 const val = parts[valIdx];
                 if (!Number.isFinite(val)) continue;
 
-                const sigName = labels[i];
+                const sigName = signalMeta[i]?.label || `Signal ${i + 1}`;
                 if (!signals[sigName]) signals[sigName] = [];
                 signals[sigName].push(val);
             }
@@ -1938,19 +2642,66 @@ class CircuitEditorApp {
         }
 
         const defaultColors = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'];
-        const traces = Object.entries(signals).map(([name, values], i) => ({
-            x: xValues,
-            y: values,
-            type: 'scatter',
-            mode: 'lines',
-            name,
-            line: { color: signalColors[name] || defaultColors[i % defaultColors.length], width: 2 }
-        }));
+        
+        // Store parsed signal data on the container for X-Y mode switching
+        const plotContainer = plotArea.closest('.plot-container');
+        plotContainer._signalData = {
+            xValues,
+            signals,
+            signalMeta,
+            signalColors,
+            defaultColors
+        };
+        plotContainer._analysisType = analysisType;
+        
+        // Populate X-Y selector dropdowns if they exist
+        this._populateXYSelectors(plotContainer, signalMeta);
+        
+        // Render in standard mode by default
+        this._renderStandardPlot(plotArea, plotContainer._signalData, analysisType);
+    }
+    
+    /**
+     * Render a standard time-domain plot
+     * @param {HTMLElement} plotArea - Plot area element
+     * @param {Object} signalData - Signal data with xValues, signals, signalMeta, signalColors
+     * @param {string} analysisType - Analysis type
+     */
+    _renderStandardPlot(plotArea, signalData, analysisType) {
+        const { xValues, signals, signalMeta, signalColors, defaultColors } = signalData;
+
+        // Keep voltage/current separated to allow dual axes
+        let hasVoltage = false;
+        let hasCurrent = false;
+        const traces = [];
+
+        signalMeta.forEach((meta, i) => {
+            const values = signals[meta.label];
+            if (!values) return;
+            const isCurrent = meta.type === 'current';
+            hasCurrent = hasCurrent || isCurrent;
+            hasVoltage = hasVoltage || !isCurrent;
+            traces.push({
+                x: xValues,
+                y: values,
+                type: 'scatter',
+                mode: 'lines',
+                name: meta.label,
+                yaxis: isCurrent ? 'y2' : 'y',
+                line: { color: signalColors[meta.label] || defaultColors[i % defaultColors.length], width: 2 }
+            });
+        });
 
         // Determine axis labels based on analysis type
         let xAxisTitle = 'Time (s)';
         if (analysisType === 'dc') {
             xAxisTitle = 'Voltage (V)';
+        }
+
+        // Choose primary Y title based on present signals
+        let yAxisTitle = 'Voltage (V)';
+        if (hasCurrent && !hasVoltage) {
+            yAxisTitle = 'Current (A)';
         }
 
         const layout = {
@@ -1967,7 +2718,7 @@ class CircuitEditorApp {
                 tickfont: { size: 9 }
             },
             yaxis: {
-                title: { text: 'Voltage (V)', font: { size: 11 } },
+                title: { text: yAxisTitle, font: { size: 11 } },
                 gridcolor: '#334155',
                 zerolinecolor: '#334155',
                 linecolor: '#475569',
@@ -1985,12 +2736,180 @@ class CircuitEditorApp {
             }
         };
 
+        if (hasCurrent && hasVoltage) {
+            // Secondary axis for current traces
+            layout.yaxis2 = {
+                title: { text: 'Current (A)', font: { size: 11 }, standoff: 20 },
+                overlaying: 'y',
+                side: 'right',
+                gridcolor: '#334155',
+                zerolinecolor: '#334155',
+                linecolor: '#475569',
+                linewidth: 1,
+                mirror: true,
+                tickfont: { size: 9 }
+            };
+            // Increase right margin to accommodate secondary y-axis
+            layout.margin.r = 60;
+        }
+
         // Use requestAnimationFrame to ensure DOM is ready and get actual dimensions
         requestAnimationFrame(() => {
             const rect = plotArea.getBoundingClientRect();
             layout.width = rect.width || 340;
             layout.height = rect.height || 260;
-            window.Plotly.newPlot(plotArea, traces, layout, { responsive: true });
+            window.Plotly.newPlot(plotArea, traces, layout, { 
+                responsive: true,
+                modeBarButtonsToRemove: ['pan2d', 'zoomIn2d', 'zoomOut2d', 'autoScale2d']
+            });
+        });
+    }
+    
+    /**
+     * Populate X-Y axis selector dropdowns
+     * @param {HTMLElement} plotContainer - Plot container element
+     * @param {Array} signalMeta - Signal metadata array
+     */
+    _populateXYSelectors(plotContainer, signalMeta) {
+        const xSelect = plotContainer.querySelector('.xy-axis-select[data-axis="x"]');
+        const ySelect = plotContainer.querySelector('.xy-axis-select[data-axis="y"]');
+        
+        if (!xSelect || !ySelect || signalMeta.length < 2) return;
+        
+        // Clear existing options except the first placeholder
+        xSelect.innerHTML = '<option value="">Select X...</option>';
+        ySelect.innerHTML = '<option value="">Select Y...</option>';
+        
+        // Add signal options
+        signalMeta.forEach((meta, index) => {
+            const xOption = document.createElement('option');
+            xOption.value = index;
+            xOption.textContent = meta.label;
+            xSelect.appendChild(xOption);
+            
+            const yOption = document.createElement('option');
+            yOption.value = index;
+            yOption.textContent = meta.label;
+            ySelect.appendChild(yOption);
+        });
+        
+        // Auto-select first two signals as defaults
+        if (signalMeta.length >= 2) {
+            xSelect.value = '0';
+            ySelect.value = '1';
+        }
+    }
+    
+    /**
+     * Update X-Y plot based on current selector values
+     * @param {HTMLElement} plotContainer - Plot container element
+     */
+    _updateXYPlot(plotContainer) {
+        const xSelect = plotContainer.querySelector('.xy-axis-select[data-axis="x"]');
+        const ySelect = plotContainer.querySelector('.xy-axis-select[data-axis="y"]');
+        const plotArea = plotContainer.querySelector('.plot-area');
+        
+        if (!xSelect || !ySelect || !plotArea || !plotContainer._signalData) return;
+        
+        const xIndex = parseInt(xSelect.value);
+        const yIndex = parseInt(ySelect.value);
+        
+        if (!Number.isFinite(xIndex) || !Number.isFinite(yIndex)) {
+            // Show message if selections are incomplete
+            plotArea.innerHTML = '<div style=\"display: flex; align-items: center; justify-content: center; height: 100%; color: #94a3b8; font-size: 12px;\">Select X and Y signals to plot</div>';
+            return;
+        }
+        
+        if (xIndex === yIndex) {
+            // Show warning if same signal selected for both axes
+            plotArea.innerHTML = '<div style=\"display: flex; align-items: center; justify-content: center; height: 100%; color: #f59e0b; font-size: 12px;\">Please select different signals for X and Y axes</div>';
+            return;
+        }
+        
+        this._renderXYPlot(plotArea, plotContainer._signalData, xIndex, yIndex);
+    }
+    
+    /**
+     * Render an X-Y plot (one signal vs another)
+     * @param {HTMLElement} plotArea - Plot area element
+     * @param {Object} signalData - Signal data with signals, signalMeta, signalColors
+     * @param {number} xIndex - Index of signal to use for X axis
+     * @param {number} yIndex - Index of signal to use for Y axis
+     */
+    _renderXYPlot(plotArea, signalData, xIndex, yIndex) {
+        const { signals, signalMeta, signalColors, defaultColors } = signalData;
+        
+        const xMeta = signalMeta[xIndex];
+        const yMeta = signalMeta[yIndex];
+        
+        if (!xMeta || !yMeta) return;
+        
+        const xValues = signals[xMeta.label];
+        const yValues = signals[yMeta.label];
+        
+        if (!xValues || !yValues) return;
+        
+        // Ensure both arrays have the same length
+        const minLength = Math.min(xValues.length, yValues.length);
+        const xData = xValues.slice(0, minLength);
+        const yData = yValues.slice(0, minLength);
+        
+        const trace = {
+            x: xData,
+            y: yData,
+            type: 'scatter',
+            mode: 'lines',
+            name: `${yMeta.label} vs ${xMeta.label}`,
+            line: { 
+                color: signalColors[yMeta.label] || defaultColors[yIndex % defaultColors.length], 
+                width: 2 
+            }
+        };
+        
+        // Determine axis labels based on signal types
+        const xUnit = xMeta.type === 'current' ? 'A' : 'V';
+        const yUnit = yMeta.type === 'current' ? 'A' : 'V';
+        
+        const layout = {
+            paper_bgcolor: '#0d1b2a',
+            plot_bgcolor: '#0d1b2a',
+            font: { color: '#e2e8f0', size: 10 },
+            xaxis: {
+                title: { text: `${xMeta.label} (${xUnit})`, font: { size: 11 } },
+                gridcolor: '#334155',
+                zerolinecolor: '#334155',
+                linecolor: '#475569',
+                linewidth: 1,
+                mirror: true,
+                tickfont: { size: 9 }
+            },
+            yaxis: {
+                title: { text: `${yMeta.label} (${yUnit})`, font: { size: 11 } },
+                gridcolor: '#334155',
+                zerolinecolor: '#334155',
+                linecolor: '#475569',
+                linewidth: 1,
+                mirror: true,
+                tickfont: { size: 9 }
+            },
+            margin: { t: 20, r: 20, b: 45, l: 50 },
+            showlegend: false
+        };
+        
+        // Use requestAnimationFrame to ensure DOM is ready and get actual dimensions
+        requestAnimationFrame(() => {
+            const rect = plotArea.getBoundingClientRect();
+            layout.width = rect.width || 340;
+            layout.height = rect.height || 260;
+            
+            try {
+                window.Plotly.newPlot(plotArea, [trace], layout, { 
+                    responsive: true,
+                    modeBarButtonsToRemove: ['pan2d', 'zoomIn2d', 'zoomOut2d', 'autoScale2d']
+                });
+            } catch (err) {
+                console.error('[X-Y Plot] Plotly.newPlot error:', err);
+            }
         });
     }
     
@@ -2146,6 +3065,230 @@ class CircuitEditorApp {
         window.addEventListener('beforeunload', () => {
             this._saveToLocalStorage();
         });
+    }
+    
+    // ==================== Results Panel Resize ====================
+    
+    _setupResultsPanelResize() {
+        const resizeHandle = document.getElementById('results-resize-handle');
+        const resultsPanel = document.getElementById('results-panel');
+        
+        if (!resizeHandle || !resultsPanel) return;
+        
+        let isResizing = false;
+        let startX = 0;
+        let startWidth = 0;
+        let resizeTimeout = null;
+        
+        const resizePlots = () => {
+            if (window.Plotly) {
+                const plotAreas = resultsPanel.querySelectorAll('.plot-area');
+                plotAreas.forEach(plotArea => {
+                    try {
+                        // Force Plotly to recalculate dimensions
+                        const update = {
+                            width: plotArea.offsetWidth,
+                            height: plotArea.offsetHeight
+                        };
+                        window.Plotly.relayout(plotArea, update);
+                    } catch (err) {
+                        // Plot may not be initialized yet
+                    }
+                });
+            }
+        };
+        
+        resizeHandle.addEventListener('mousedown', (e) => {
+            isResizing = true;
+            startX = e.clientX;
+            startWidth = resultsPanel.offsetWidth;
+            resizeHandle.classList.add('resizing');
+            document.body.style.cursor = 'col-resize';
+            document.body.style.userSelect = 'none';
+            e.preventDefault();
+        });
+        
+        document.addEventListener('mousemove', (e) => {
+            if (!isResizing) return;
+            
+            const deltaX = startX - e.clientX; // Subtract because panel grows to the left
+            const newWidth = Math.max(280, Math.min(800, startWidth + deltaX));
+            resultsPanel.style.width = `${newWidth}px`;
+            
+            // Debounce resize during drag for better performance
+            if (resizeTimeout) clearTimeout(resizeTimeout);
+            resizeTimeout = setTimeout(resizePlots, 50);
+        });
+        
+        document.addEventListener('mouseup', () => {
+            if (isResizing) {
+                isResizing = false;
+                resizeHandle.classList.remove('resizing');
+                document.body.style.cursor = '';
+                document.body.style.userSelect = '';
+                
+                // Final resize when drag completes
+                if (resizeTimeout) clearTimeout(resizeTimeout);
+                resizePlots();
+            }
+        });
+    }
+    
+    // ==================== Undo/Redo ====================
+    
+    _onGroupDragComplete(moveData) {
+        // Record move operation using full state snapshot
+        // This is simpler than tracking individual component/node movements
+        // Future optimization: track individual moves for better granularity
+        // For now, we don't record moves to keep it simple and avoid too many undo entries
+    }
+    
+    _serializeComponent(component) {
+        return {
+            id: component.id,
+            name: component.name,
+            x: component.x,
+            y: component.y,
+            width: component.width,
+            height: component.height,
+            rotation: component.rotation,
+            pins: component.pins,
+            meta: component.meta
+        };
+    }
+    
+    _undo() {
+        const success = this.undoManager.undo((action) => {
+            try {
+                switch (action.type) {
+                    case UNDO_TYPES.ADD_COMPONENT:
+                        // Remove the component that was added
+                        this.componentManager.removeComponent(action.data.component.id);
+                        break;
+                        
+                    case UNDO_TYPES.DELETE_COMPONENT: {
+                        // Restore the component that was deleted
+                        const comp = action.data.component;
+                        const component = new Component({
+                            id: comp.id,
+                            name: comp.name,
+                            x: comp.x,
+                            y: comp.y,
+                            width: comp.width,
+                            height: comp.height,
+                            rotation: comp.rotation,
+                            pins: comp.pins,
+                            meta: comp.meta
+                        });
+                        this.componentManager.addComponent(component);
+                        break;
+                    }
+                    
+                    case UNDO_TYPES.DELETE_WIRE_SEGMENT: {
+                        // Restore the wire segment
+                        const { segment } = action.data;
+                        const nodeId1 = this.wireGraph.addNode(segment.node1.x, segment.node1.y);
+                        const nodeId2 = this.wireGraph.addNode(segment.node2.x, segment.node2.y);
+                        this.wireGraph.addSegment(nodeId1, nodeId2);
+                        break;
+                    }
+                    
+                    case UNDO_TYPES.DELETE_PROBE: {
+                        // Restore the probe
+                        const { probe } = action.data;
+                        this.probeManager.restoreProbe(probe, { render: false });
+                        break;
+                    }
+                    
+                    case UNDO_TYPES.FULL_STATE: {
+                        // Restore entire state
+                        this._deserialize(action.data.stateBefore);
+                        break;
+                    }
+                    
+                    default:
+                        console.warn('Unknown undo action type:', action.type);
+                        return false;
+                }
+                
+                this._saveToLocalStorage();
+                this.viewport.render();
+                return true;
+            } catch (error) {
+                console.error('Undo failed:', error);
+                return false;
+            }
+        });
+        
+        if (!success && this.undoManager.canUndo()) {
+            console.log('Nothing to undo');
+        }
+    }
+    
+    _redo() {
+        const success = this.undoManager.redo((action) => {
+            try {
+                switch (action.type) {
+                    case UNDO_TYPES.ADD_COMPONENT: {
+                        // Re-add the component
+                        const comp = action.data.component;
+                        const component = new Component({
+                            id: comp.id,
+                            name: comp.name,
+                            x: comp.x,
+                            y: comp.y,
+                            width: comp.width,
+                            height: comp.height,
+                            rotation: comp.rotation,
+                            pins: comp.pins,
+                            meta: comp.meta
+                        });
+                        this.componentManager.addComponent(component);
+                        break;
+                    }
+                    
+                    case UNDO_TYPES.DELETE_COMPONENT:
+                        // Re-delete the component
+                        this.componentManager.removeComponent(action.data.component.id);
+                        break;
+                        
+                    case UNDO_TYPES.DELETE_WIRE_SEGMENT: {
+                        // Re-delete the wire segment
+                        const { segment } = action.data;
+                        this.wireGraph.removeSegment(segment.nodeId1, segment.nodeId2);
+                        this.wireGraph.cleanup();
+                        break;
+                    }
+                    
+                    case UNDO_TYPES.DELETE_PROBE: {
+                        // Re-delete the probe
+                        this.probeManager.removeProbe(action.data.probe.id);
+                        break;
+                    }
+                    
+                    case UNDO_TYPES.FULL_STATE: {
+                        // Restore state after
+                        this._deserialize(action.data.stateAfter);
+                        break;
+                    }
+                    
+                    default:
+                        console.warn('Unknown redo action type:', action.type);
+                        return false;
+                }
+                
+                this._saveToLocalStorage();
+                this.viewport.render();
+                return true;
+            } catch (error) {
+                console.error('Redo failed:', error);
+                return false;
+            }
+        });
+        
+        if (!success && this.undoManager.canRedo()) {
+            console.log('Nothing to redo');
+        }
     }
 }
 

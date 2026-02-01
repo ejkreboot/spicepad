@@ -5,6 +5,40 @@ let stderrBuffer = '';
 let isInitialized = false;
 let pendingNetlist = null;
 let pendingSpinit = null;
+let codeModelLoadPromise = Promise.resolve();
+
+const CODE_MODEL_DIR = '/usr/local/lib/ngspice';
+const CODE_MODEL_FILES = [
+  'analog.cm',
+  'digital.cm',
+  'spice2poly.cm',
+  'table.cm',
+  'tlines.cm',
+  'xtradev.cm',
+  'xtraevt.cm'
+];
+
+async function loadCodeModels() {
+  try {
+    FS.createPath('/', 'usr/local/lib/ngspice', true, true);
+  } catch (err) {
+    self.postMessage({ type: 'stderr', text: 'Could not create code model directory: ' + err.message });
+    return;
+  }
+
+  await Promise.all(
+    CODE_MODEL_FILES.map(async (file) => {
+      try {
+        const response = await fetch('/' + file);
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        const buffer = new Uint8Array(await response.arrayBuffer());
+        FS.writeFile(`${CODE_MODEL_DIR}/${file}`, buffer);
+      } catch (err) {
+        self.postMessage({ type: 'stderr', text: `Failed to load code model ${file}: ${err.message}` });
+      }
+    })
+  );
+}
 
 // Configure Module BEFORE importScripts
 var Module = {
@@ -19,6 +53,7 @@ var Module = {
   },
   onRuntimeInitialized: () => {
     isInitialized = true;
+    codeModelLoadPromise = loadCodeModels();
     self.postMessage({ type: 'initialized' });
     
     // If we had a pending simulation, run it now
@@ -33,11 +68,13 @@ var Module = {
 // Load once at worker startup
 importScripts('ngspice.js');
 
-function runSimulation(netlist, spinit) {
+async function runSimulation(netlist, spinit) {
   outputBuffer = '';
   stderrBuffer = '';
   
   try {
+    await codeModelLoadPromise;
+
     if (spinit) {
       try {
         FS.createPath('/', 'usr/local/share/ngspice/scripts', true, true);
@@ -81,7 +118,9 @@ self.onmessage = function(e) {
   
   if (type === 'run') {
     if (isInitialized) {
-      runSimulation(netlist, spinit);
+      runSimulation(netlist, spinit).catch(err => {
+        self.postMessage({ type: 'error', message: err.message, stack: err.stack });
+      });
     } else {
       // Queue it for when initialization completes
       pendingNetlist = netlist;

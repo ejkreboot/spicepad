@@ -301,14 +301,15 @@ export class ComponentManager {
 				const isFloating = this._isPinFloating(nodeId);
 				const fill = isFloating ? this.floatingPinColor : this.pinFill;
 				viewport.drawCircle(pos.x, pos.y, this.pinRadius / viewport.zoom, fill, null, 0);
+				this._renderPinLabel(ctx, viewport, component, pin, pos);
 			}
 
 			this._renderComponentLabels(ctx, viewport, component);
 		}
 	}
 
-	_getLabelPosition(component, labelType) {
-		const labels = component.meta?.labels;
+	_getLabelPosition(component, labelType, labelsOverride = null) {
+		const labels = labelsOverride ?? component.meta?.labels;
 		if (!labels) return null;
 		const labelIndex = component.getLabelIndex ? component.getLabelIndex() : 0;
 		const overrides = component.meta?.labelOverrides;
@@ -316,9 +317,46 @@ export class ComponentManager {
 		const basePos = labels?.[labelType]?.[labelIndex];
 		const pos = overridePos ?? basePos;
 		if (!pos) return null;
+
+		const baseOrientation = labelIndex === 1 ? 90 : 0;
+		const rotation = component.rotation || 0;
+		const relativeRotation = ((rotation - baseOrientation) % 360 + 360) % 360;
+		// Use original dimensions for label position calculations
+		const origDims = component.getOriginalDimensions ? component.getOriginalDimensions() : { width: component.width, height: component.height };
+		const cx = origDims.width / 2;
+		const cy = origDims.height / 2;
+		let dx = pos.x - cx;
+		let dy = pos.y - cy;
+
+		switch (relativeRotation) {
+			case 90: {
+				const tmp = dx;
+				dx = -dy;
+				dy = tmp;
+				break;
+			}
+			case 180:
+				dx = -dx;
+				dy = -dy;
+				break;
+			case 270: {
+				const tmp = dx;
+				dx = dy;
+				dy = -tmp;
+				break;
+			}
+			default:
+				break;
+		}
+
+		// Calculate world position using the actual bounding box center
+		const bounds = component.getBounds();
+		const worldCenterX = bounds.x + bounds.width / 2;
+		const worldCenterY = bounds.y + bounds.height / 2;
+
 		return {
-			x: component.x + pos.x,
-			y: component.y + pos.y,
+			x: worldCenterX + dx,
+			y: worldCenterY + dy,
 			labelIndex
 		};
 	}
@@ -434,8 +472,19 @@ export class ComponentManager {
 	_renderComponentLabels(ctx, viewport, component) {
 		const labels = component.meta?.labels;
 		const designatorText = component.meta?.designatorText ?? '';
+		const designatorDisplay = designatorText
+			|| component.meta?.definition?.designator?.prefix
+			|| component.meta?.definition?.name
+			|| component.name
+			|| component.id;
 		const valueText = component.meta?.valueText;
-		if (!labels) return;
+
+		// If no label metadata, fall back to center positions
+		const fallbackLabels = {
+			designator: [{ x: component.x + component.width / 2, y: component.y - 6 }],
+			value: [{ x: component.x + component.width / 2, y: component.y + component.height + 6 }]
+		};
+		const labelsOrFallback = labels || fallbackLabels;
 
 		viewport.beginWorldPath();
 		ctx.fillStyle = '#111111';
@@ -443,18 +492,21 @@ export class ComponentManager {
 		ctx.textAlign = 'center';
 		ctx.textBaseline = 'middle';
 
-
-
-		const designatorPos = this._getLabelPosition(component, 'designator');
-		if (designatorPos && designatorText) {
-			ctx.fillText(designatorText, designatorPos.x, designatorPos.y);
-			this._maybeRenderLabelHover(ctx, component, 'designator', designatorText);
+		const designatorPos = this._getLabelPosition(component, 'designator', labelsOrFallback);
+		if (designatorPos && designatorDisplay) {
+			ctx.fillText(designatorDisplay, designatorPos.x, designatorPos.y);
+			this._maybeRenderLabelHover(ctx, component, 'designator', designatorDisplay);
 		}
 
-		const valuePos = this._getLabelPosition(component, 'value');
-		if (valuePos && valueText !== null && valueText !== undefined && valueText !== '') {
-			ctx.fillText(String(valueText), valuePos.x, valuePos.y);
-			this._maybeRenderLabelHover(ctx, component, 'value', valueText);
+		const valuePos = this._getLabelPosition(component, 'value', labelsOrFallback);
+		const isSubcircuit = component.meta?.definition?.componentType === 'subcircuit';
+		const fallbackValue = isSubcircuit ? (component.meta?.definition?.name || component.meta?.definitionId || '') : '';
+		const valueDisplay = (valueText !== null && valueText !== undefined && valueText !== '')
+			? valueText
+			: fallbackValue;
+		if (valuePos && valueDisplay) {
+			ctx.fillText(String(valueDisplay), valuePos.x, valuePos.y);
+			this._maybeRenderLabelHover(ctx, component, 'value', valueDisplay);
 		}
 
 		viewport.endWorldPath();
@@ -490,6 +542,8 @@ export class ComponentManager {
 	}
 
 	_renderPinLabel(ctx, viewport, component, pin, pinPos) {
+		const isSubcircuit = component.meta?.definition?.componentType === 'subcircuit';
+		if (!isSubcircuit) return;
 		if (!pin.labelOffset) return;
 		viewport.beginWorldPath();
 		ctx.fillStyle = '#111111';

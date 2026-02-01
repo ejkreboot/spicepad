@@ -965,6 +965,75 @@ export function getDefaultComponents() {
 				"definition": ".subckt XFMR_CENTER_TAP"
 			}
 		},
+		"custom_subcircuit": {
+			"name": "Subcircuit",
+			"description": "Place a custom .subckt definition",
+			"componentType": "subcircuit",
+			"dynamicSubcircuit": true,
+			"defaultValue": "",
+			"designator": {
+				"prefix": "X",
+				"autoIncrement": true
+			},
+			"size": {
+				"width": 80,
+				"height": 40
+			},
+			"models": [],
+			"pins": [
+				{
+					"id": "1",
+					"name": "1",
+					"position": {
+						"x": 0,
+						"y": 20
+					},
+					"labelPosition": {
+						"x": 12,
+						"y": 20
+					}
+				},
+				{
+					"id": "2",
+					"name": "2",
+					"position": {
+						"x": 80,
+						"y": 20
+					},
+					"labelPosition": {
+						"x": 68,
+						"y": 20
+					}
+				}
+			],
+			"labels": {
+				"designator": [
+					{
+						"x": 40,
+						"y": -6
+					},
+					{
+						"x": 40,
+						"y": -6
+					}
+				],
+				"value": [
+					{
+						"x": 40,
+						"y": 48
+					},
+					{
+						"x": 40,
+						"y": 48
+					}
+				]
+			},
+			"svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 60\" data-generated-by=\"symbol-editor\" data-comp-width=\"80\" data-comp-height=\"40\" data-offset-x=\"10\" data-offset-y=\"10\"><rect x=\"20\" y=\"15\" width=\"60\" height=\"30\" rx=\"4\" ry=\"4\" fill=\"#ffffff\" stroke=\"#000000\" stroke-width=\"1.2\"/><path fill=\"none\" stroke=\"#000000\" stroke-width=\"1\" stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"M 10 30 L 20 30\"/><path fill=\"none\" stroke=\"#000000\" stroke-width=\"1\" stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"M 80 30 L 90 30\"/><text x=\"50\" y=\"32\" text-anchor=\"middle\" font-size=\"9\" font-family=\"Helvetica, Arial, sans-serif\" fill=\"#000000\">SUB</text></svg>",
+			"subcircuit": {
+				"name": "CUSTOM_SUBCKT",
+				"definition": ".subckt CUSTOM_SUBCKT 1 2\nRPLACE 1 2 1k\n.ends CUSTOM_SUBCKT"
+			}
+		},
 		"zener": {
 			"name": "Zener",
 			"description": "",
