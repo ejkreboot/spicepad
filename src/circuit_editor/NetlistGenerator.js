@@ -233,8 +233,17 @@ export class NetlistGenerator {
             const senseNetBase = this._sanitizeIdentifier(`${originalNet}_IP${counter}`, `${originalNet}_IP`, { allowLeadingDigit: true });
             const senseNet = this._makeUniqueName(senseNetBase, existingNetNames);
 
-            // Reassign the probed node to the new net so the inserted source sits in series
-            netMap.set(probe.nodeId, senseNet);
+            // Pick the downstream side of the net to move onto the sense node
+            const senseNodes = this._selectSenseSideNodes(probe);
+
+            // Ensure we move at least the probe's attachment node so the sense net is used
+            if (senseNodes.size === 0) {
+                senseNodes.add(probe.nodeId);
+            }
+
+            for (const nodeId of senseNodes) {
+                netMap.set(nodeId, senseNet);
+            }
 
             result.currentProbeLines.push(`${sourceName} ${originalNet} ${senseNet} 0`);
             result.currentProbeMeta.set(probe.id, { sourceName, positiveNet: originalNet, senseNet });
@@ -243,6 +252,151 @@ export class NetlistGenerator {
         }
 
         return result;
+    }
+
+    /**
+     * Decide which side of a probed net should be moved to the sense node
+     * @param {{ nodeId: number, segmentId?: string | null }} probe
+     * @returns {Set<number>} Node IDs to reassign to the sense net
+     */
+    _selectSenseSideNodes(probe) {
+        const senseNodes = new Set();
+        const probeNodeId = probe.nodeId;
+        if (probeNodeId === null || probeNodeId === undefined) return senseNodes;
+
+        // If the probe snapped to a specific segment, split the graph across that segment
+        const segmentId = probe.segmentId || probe.connectedSegmentId || null;
+        const segment = segmentId ? this.wireGraph.getSegment(segmentId) : null;
+        if (segment) {
+            const blocked = new Set([segment.id]);
+            const sideA = this._collectNodesFrom(segment.nodeId1, blocked);
+            const sideB = this._collectNodesFrom(segment.nodeId2, blocked);
+            if (this._areSetsEqual(sideA, sideB)) {
+                return new Set([segment.nodeId2]);
+            }
+            return this._pickPreferredSide(sideA, sideB);
+        }
+
+        // Otherwise, try to split along one of the adjacent connections
+        const neighbors = this.wireGraph.getConnectedNodes(probeNodeId) || [];
+        let bestSide = null;
+        let bestScore = null;
+
+        for (const neighbor of neighbors) {
+            const segId = `${Math.min(probeNodeId, neighbor)}-${Math.max(probeNodeId, neighbor)}`;
+            const side = this._collectNodesFrom(neighbor, new Set([segId]));
+            const score = this._scoreNodeSet(side);
+            if (!bestSide || this._isBetterSide(score, bestScore)) {
+                bestSide = side;
+                bestScore = score;
+            }
+        }
+        if (bestSide && bestSide.has(probeNodeId)) {
+            const trimmed = new Set([...bestSide].filter(id => id !== probeNodeId));
+            if (trimmed.size > 0) {
+                return trimmed;
+            }
+        }
+        return bestSide || senseNodes;
+    }
+
+    /**
+     * Breadth-first collect nodes reachable from a starting node while optionally excluding segments
+     * @param {number} startNodeId
+     * @param {Set<string>} blockedSegmentIds
+     * @returns {Set<number>}
+     */
+    _collectNodesFrom(startNodeId, blockedSegmentIds = new Set()) {
+        const visited = new Set();
+        const queue = [startNodeId];
+
+        while (queue.length > 0) {
+            const nodeId = queue.shift();
+            if (visited.has(nodeId)) continue;
+            visited.add(nodeId);
+
+            const segments = this.wireGraph.getSegmentsForNode(nodeId);
+            for (const segment of segments) {
+                if (blockedSegmentIds.has(segment.id)) continue;
+                const otherId = segment.nodeId1 === nodeId ? segment.nodeId2 : segment.nodeId1;
+                if (!visited.has(otherId)) {
+                    queue.push(otherId);
+                }
+            }
+        }
+
+        return visited;
+    }
+
+    _areSetsEqual(a, b) {
+        if (a.size !== b.size) return false;
+        for (const value of a) {
+            if (!b.has(value)) return false;
+        }
+        return true;
+    }
+
+    _pickPreferredSide(sideA, sideB) {
+        const scoreA = this._scoreNodeSet(sideA);
+        const scoreB = this._scoreNodeSet(sideB);
+        if (this._isBetterSide(scoreA, scoreB)) return sideA;
+        if (this._isBetterSide(scoreB, scoreA)) return sideB;
+        // Fallback: prefer the larger side so we definitely include loads
+        return sideB.size > sideA.size ? sideB : sideA;
+    }
+
+    _isBetterSide(candidateScore, currentScore) {
+        if (!currentScore) return true;
+        if (candidateScore.driverCount !== currentScore.driverCount) {
+            return candidateScore.driverCount < currentScore.driverCount;
+        }
+        if (candidateScore.componentCount !== currentScore.componentCount) {
+            return candidateScore.componentCount > currentScore.componentCount;
+        }
+        if (candidateScore.pinCount !== currentScore.pinCount) {
+            return candidateScore.pinCount > currentScore.pinCount;
+        }
+        return candidateScore.size > currentScore.size;
+    }
+
+    _scoreNodeSet(nodeSet) {
+        let driverCount = 0;
+        let componentCount = 0;
+        let pinCount = 0;
+
+        for (const component of this.componentManager.components) {
+            const pinMap = this.componentManager.pinNodeIdsByComponent.get(component.id);
+            if (!pinMap) continue;
+
+            let touches = false;
+            for (const nodeId of pinMap.values()) {
+                if (nodeSet.has(nodeId)) {
+                    touches = true;
+                    pinCount++;
+                }
+            }
+
+            if (touches) {
+                componentCount++;
+                if (this._isDriverComponent(component)) {
+                    driverCount++;
+                }
+            }
+        }
+
+        return {
+            driverCount,
+            componentCount,
+            pinCount,
+            size: nodeSet.size
+        };
+    }
+
+    _isDriverComponent(component) {
+        const definition = component.meta?.definition;
+        const designator = component.meta?.designatorText || component.name || component.id;
+        const spiceType = definition?.spiceType || this._guessSpiceType(designator);
+        return spiceType === 'voltage' || spiceType === 'current';
     }
 
     /**

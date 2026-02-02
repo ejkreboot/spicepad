@@ -91,6 +91,7 @@ export class ProbeManager {
             label: probeLabel,
             rotation: rotation,
             nodeId: null, // Will be set when connected to a wire
+            connectedSegmentId: null, // Track which segment we snapped to for current probes
             color: colorSet.stroke,
             fillColor: colorSet.fill,
             labelColor: colorSet.label,
@@ -222,8 +223,10 @@ export class ProbeManager {
             id: probe.id,
             label: probe.label,
             nodeId: probe.nodeId,
+            segmentId: probe.connectedSegmentId || null,
             x: probe.x,
             y: probe.y,
+            rotation: probe.rotation || 0,
             color: probe.color || '#3b82f6',
             type: probe.type || 'voltage'
         }));
@@ -465,6 +468,7 @@ export class ProbeManager {
         const node = this.wireGraph.getNodeAt(tipPos.x, tipPos.y, this.hitTolerance);
         if (node) {
             probe.nodeId = node.id;
+            probe.connectedSegmentId = null;
             return;
         }
         
@@ -473,10 +477,12 @@ export class ProbeManager {
         if (segmentResult) {
             // Use one of the segment's nodes (they're on the same net)
             probe.nodeId = segmentResult.segment.nodeId1;
+            probe.connectedSegmentId = segmentResult.segment.id;
             return;
         }
         
         probe.nodeId = null;
+        probe.connectedSegmentId = null;
     }
     
     /**

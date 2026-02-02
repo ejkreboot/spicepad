@@ -97,6 +97,7 @@
                 </div>
 
                 <!-- Results panel (plots) -->
+                <div class="results-resize-handle" id="results-resize-handle"></div>
                 <div class="results-panel" id="results-panel">
                     <div class="results-header">
                         <h3>Results</h3>
@@ -125,6 +126,9 @@
                         <span class="material-symbols-outlined">terminal</span>
                         <span>Console</span>
                         <span class="material-symbols-outlined toggle-icon">expand_less</span>
+                    </button>
+                    <button class="console-action-btn" id="console-copy-btn" title="Copy console output">
+                        <span class="material-symbols-outlined">content_copy</span>
                     </button>
                 </div>
                 <pre id="sim-log" class="console-output">Click Run to simulate the current circuit.</pre>

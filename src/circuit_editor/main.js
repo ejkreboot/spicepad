@@ -209,6 +209,12 @@ class CircuitEditorApp {
 
         // Sync initial state
         this._setActiveProbeTypeButton(this.probeManager.getProbeType());
+        
+        // Console copy button
+        const consoleCopyBtn = document.getElementById('console-copy-btn');
+        if (consoleCopyBtn) {
+            consoleCopyBtn.addEventListener('click', () => this._copyConsoleOutput());
+        }
     }
     
     /**
@@ -1766,6 +1772,29 @@ class CircuitEditorApp {
         URL.revokeObjectURL(url);
     }
     
+    _copyConsoleOutput() {
+        const consoleOutput = document.getElementById('sim-log');
+        if (!consoleOutput) return;
+        const text = consoleOutput.textContent;
+        navigator.clipboard.writeText(text).then(() => {
+            // Visual feedback: briefly change button appearance
+            const btn = document.getElementById('console-copy-btn');
+            if (btn) {
+                const icon = btn.querySelector('.material-symbols-outlined');
+                const originalText = icon.textContent;
+                icon.textContent = 'check';
+                btn.style.color = '#10b981';
+                setTimeout(() => {
+                    icon.textContent = originalText;
+                    btn.style.color = '';
+                }, 1000);
+            }
+        }).catch(err => {
+            console.error('Failed to copy console output:', err);
+            alert('Failed to copy console output to clipboard.');
+        });
+    }
+    
     // ==================== Simulation Modal ====================
     
     _setupSimulationModal() {
@@ -2036,25 +2065,7 @@ class CircuitEditorApp {
             });
         }
 
-        // Console copy button
-        const consoleCopyBtn = document.getElementById('console-copy-btn');
-        if (consoleCopyBtn) {
-            consoleCopyBtn.addEventListener('click', () => {
-                const consoleOutput = document.getElementById('sim-log');
-                if (consoleOutput) {
-                    navigator.clipboard.writeText(consoleOutput.textContent).then(() => {
-                        const icon = consoleCopyBtn.querySelector('.material-symbols-outlined');
-                        const originalIcon = icon.textContent;
-                        icon.textContent = 'check';
-                        setTimeout(() => {
-                            icon.textContent = originalIcon;
-                        }, 1500);
-                    }).catch(err => {
-                        console.error('Failed to copy:', err);
-                    });
-                }
-            });
-        }
+        // Console copy button - handled in constructor
 
         if (this.spiceRunBtn) {
             this.spiceRunBtn.addEventListener('click', () => this._runNgspiceSimulation());

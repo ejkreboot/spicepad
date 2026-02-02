@@ -135,11 +135,68 @@ h1 {
 .workspace-top {
     flex: 1;
     display: flex;
-    gap: 16px;
+    gap: 4px;
     min-height: 0;
 }
 
 /* Results Panel */
+.results-resize-handle {
+    width: 5px;
+    cursor: col-resize;
+    background: transparent;
+    flex-shrink: 0;
+    position: relative;
+    z-index: 10;
+    transition: background-color 0.2s ease;
+}
+
+.results-resize-handle::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 3px;
+    height: 40px;
+    background: repeating-linear-gradient(
+        to bottom,
+        #cbd5e1 0px,
+        #cbd5e1 4px,
+        transparent 4px,
+        transparent 8px
+    );
+    border-radius: 2px;
+    transition: opacity 0.2s ease;
+}
+
+.results-resize-handle:hover {
+    background-color: rgba(59, 130, 246, 0.1);
+}
+
+.results-resize-handle:hover::before {
+    background: repeating-linear-gradient(
+        to bottom,
+        #3b82f6 0px,
+        #3b82f6 4px,
+        transparent 4px,
+        transparent 8px
+    );
+}
+
+.results-resize-handle.resizing {
+    background-color: rgba(59, 130, 246, 0.15);
+}
+
+.results-resize-handle.resizing::before {
+    background: repeating-linear-gradient(
+        to bottom,
+        #3b82f6 0px,
+        #3b82f6 4px,
+        transparent 4px,
+        transparent 8px
+    );
+}
+
 .results-panel {
     width: 380px;
     flex-shrink: 0;
@@ -371,6 +428,29 @@ h1 {
 
 .console-panel.collapsed .console-toggle .toggle-icon {
     transform: rotate(180deg);
+}
+
+.console-action-btn {
+    padding: 8px;
+    background: transparent;
+    border: none;
+    color: #94a3b8;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s;
+    border-radius: 4px;
+    margin-right: 8px;
+}
+
+.console-action-btn:hover {
+    background: #334155;
+    color: #e2e8f0;
+}
+
+.console-action-btn .material-symbols-outlined {
+    font-size: 18px;
 }
 
 .console-output {
