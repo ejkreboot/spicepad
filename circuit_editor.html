@@ -37,6 +37,17 @@
                             <span class="material-symbols-outlined">sensors</span>
                             Probe
                         </button>
+                        <!-- Probe Type Selector (shown when probe tool is active) -->
+                        <div class="probe-type-selector" id="probe-type-selector" style="display: none;">
+                            <button class="btn btn-secondary btn-small probe-type-btn active" data-probe-type="voltage" title="Voltage Probe">
+                                <span class="material-symbols-outlined">bolt</span>
+                                V
+                            </button>
+                            <button class="btn btn-secondary btn-small probe-type-btn" data-probe-type="current" title="Current Probe">
+                                <span class="material-symbols-outlined">electric_bolt</span>
+                                I
+                            </button>
+                        </div>
                         <button class="btn btn-secondary tool-btn" data-tool="delete" title="Delete Tool (D)">
                             <span class="material-symbols-outlined">delete_forever</span>
                             Delete
@@ -335,6 +346,36 @@ R1 a b 1k
             <div class="modal-actions">
                 <button class="btn btn-secondary" type="button" id="subcircuit-modal-cancel">Cancel</button>
                 <button class="btn btn-primary" type="button" id="subcircuit-modal-ok">Add Subcircuit</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="probe-modal" aria-hidden="true">
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="probe-modal-title">
+            <div class="modal-header">
+                <h3 id="probe-modal-title">Edit Probe</h3>
+                <button class="btn btn-secondary modal-close" type="button" aria-label="Close">Close</button>
+            </div>
+            <div class="modal-body">
+                <div class="modal-field">
+                    <label for="probe-label-input">Probe Name</label>
+                    <input type="text" id="probe-label-input" placeholder="Probe1" />
+                </div>
+                <div class="modal-field">
+                    <label for="probe-type-select">Probe Type</label>
+                    <select id="probe-type-select">
+                        <option value="voltage">Voltage</option>
+                        <option value="current">Current</option>
+                    </select>
+                </div>
+                <div class="modal-field">
+                    <label for="probe-color-input">Probe Color</label>
+                    <input type="color" id="probe-color-input" value="#3b82f6" />
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" type="button" id="probe-modal-cancel">Cancel</button>
+                <button class="btn btn-primary" type="button" id="probe-modal-save">Save</button>
             </div>
         </div>
     </div>

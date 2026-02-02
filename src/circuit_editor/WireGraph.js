@@ -299,6 +299,7 @@ export class WireGraph {
     mergeCollinearSegments(nodeId) {
         const node = this.nodes.get(nodeId);
         if (!node) return false;
+        if (node.isComponentPin) return false; // Never collapse through a component pin
         
         const connectedIds = this.getConnectedNodes(nodeId);
         if (connectedIds.length !== 2) return false;

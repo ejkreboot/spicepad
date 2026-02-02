@@ -39,7 +39,7 @@ export class NetlistGenerator {
      * Generate netlist and return accompanying metadata
      * @param {Array} [customDirectives]
      * @param {Object} [options]
-     * @returns {{ netlist: string, netMap: Map<number, string>, netNames: string[], probeInfo: Array<{label: string, node: string}>, analysisType: string }}
+     * @returns {{ netlist: string, netMap: Map<number, string>, netNames: string[], probeInfo: Array<{label: string, node?: string, sourceName?: string, type: string}>, analysisType: string }}
      */
     generateWithMetadata(customDirectives = null, options = {}) {
         const { includeControlBlock = false, controlSignals = null } = options;
@@ -51,8 +51,18 @@ export class NetlistGenerator {
         lines.push('* Generated: ' + new Date().toISOString());
         lines.push('');
 
+        // Refresh probe connections before using their node assignments
+        if (this.probeManager) {
+            this.probeManager.refreshConnections();
+        }
+
         // Build net assignments (map node IDs to net names)
         const netMap = this._buildNetMap();
+
+        // Insert virtual elements for current probes and split nets accordingly
+        const { currentProbeLines, currentProbeMeta } = this._processCurrentProbes(netMap);
+
+        // Recompute net names after any probe-induced splits
         const netNames = Array.from(new Set(netMap.values())).filter(name => name !== '0');
 
         // Inline subcircuit definitions so instances resolve
@@ -70,9 +80,16 @@ export class NetlistGenerator {
 
         // Generate component lines
         const componentLines = this._generateComponentLines(netMap);
-        if (componentLines.length > 0) {
+        if (componentLines.length > 0 || currentProbeLines.length > 0) {
             lines.push('* Components');
-            lines.push(...componentLines);
+            if (componentLines.length > 0) {
+                lines.push(...componentLines);
+            }
+            if (currentProbeLines.length > 0) {
+                if (componentLines.length > 0) lines.push('');
+                lines.push('* Current probes (virtual 0V sources for measurement)');
+                lines.push(...currentProbeLines);
+            }
             lines.push('');
         }
 
@@ -104,13 +121,8 @@ export class NetlistGenerator {
             lines.push('.op');
         }
 
-        // Refresh probe connections before building probe info
-        if (this.probeManager) {
-            this.probeManager.refreshConnections();
-        }
-        
         // Build probe info and signals for wrdata
-        const probeInfo = this._buildProbeInfo(netMap);
+        const probeInfo = this._buildProbeInfo(netMap, currentProbeMeta);
         
         if (includeControlBlock) {
             const signals = this._resolveControlSignals(controlSignals, netNames, probeInfo);
@@ -136,17 +148,33 @@ export class NetlistGenerator {
     }
 
     /**
-     * Build probe information array mapping probe labels to net names
+     * Build probe information array mapping probe labels to net names or current sources
      * @param {Map<number, string>} netMap
-     * @returns {Array<{label: string, node: string, nodeId: number, color: string}>}
+     * @param {Map<string, {sourceName: string, positiveNet: string, senseNet: string}>} [currentProbeMeta]
+     * @returns {Array<{label: string, node?: string, nodeId?: number, color: string, type: string, sourceName?: string, isGround?: boolean}>}
      */
-    _buildProbeInfo(netMap) {
+    _buildProbeInfo(netMap, currentProbeMeta = new Map()) {
         if (!this.probeManager) return [];
         
         const probeData = this.probeManager.getProbeData();
         const probeInfo = [];
         
         for (const probe of probeData) {
+            const type = probe.type || 'voltage';
+            if (type === 'current') {
+                const meta = currentProbeMeta.get(probe.id);
+                if (!meta) continue;
+                probeInfo.push({
+                    label: probe.label,
+                    node: meta.positiveNet,
+                    nodeId: probe.nodeId,
+                    type: 'current',
+                    sourceName: meta.sourceName,
+                    color: probe.color || '#3b82f6'
+                });
+                continue;
+            }
+
             if (probe.nodeId !== null) {
                 const netName = netMap.get(probe.nodeId);
                 if (netName) {
@@ -156,6 +184,7 @@ export class NetlistGenerator {
                         node: netName,
                         nodeId: probe.nodeId,
                         isGround: netName === '0',
+                        type: 'voltage',
                         color: probe.color || '#3b82f6'
                     });
                 }
@@ -163,6 +192,57 @@ export class NetlistGenerator {
         }
         
         return probeInfo;
+    }
+
+    /**
+     * Split nets and create virtual voltage sources for current probes
+     * @param {Map<number, string>} netMap
+     * @returns {{ currentProbeLines: string[], currentProbeMeta: Map<string, {sourceName: string, positiveNet: string, senseNet: string}> }}
+     */
+    _processCurrentProbes(netMap) {
+        const result = {
+            currentProbeLines: [],
+            currentProbeMeta: new Map()
+        };
+
+        if (!this.probeManager) return result;
+
+        const probeData = this.probeManager.getProbeData();
+        if (!Array.isArray(probeData) || probeData.length === 0) return result;
+
+        const existingNetNames = new Set(netMap.values());
+        const existingDesignators = new Set(
+            this.componentManager.components
+                .map(comp => comp?.meta?.designatorText || comp?.name || comp?.id)
+                .filter(Boolean)
+        );
+
+        let counter = 1;
+
+        for (const probe of probeData) {
+            if ((probe.type || 'voltage') !== 'current') continue;
+            if (probe.nodeId === null || probe.nodeId === undefined) continue;
+
+            const originalNet = netMap.get(probe.nodeId);
+            if (!originalNet || originalNet === '0') continue;
+
+            const safeLabel = this._sanitizeIdentifier(probe.label, `I${counter}`, { allowLeadingDigit: true });
+            const sourceBase = this._sanitizeIdentifier(`V_IPROBE_${safeLabel}`, `V_IPROBE_${counter}`);
+            const sourceName = this._makeUniqueName(sourceBase, existingDesignators);
+
+            const senseNetBase = this._sanitizeIdentifier(`${originalNet}_IP${counter}`, `${originalNet}_IP`, { allowLeadingDigit: true });
+            const senseNet = this._makeUniqueName(senseNetBase, existingNetNames);
+
+            // Reassign the probed node to the new net so the inserted source sits in series
+            netMap.set(probe.nodeId, senseNet);
+
+            result.currentProbeLines.push(`${sourceName} ${originalNet} ${senseNet} 0`);
+            result.currentProbeMeta.set(probe.id, { sourceName, positiveNet: originalNet, senseNet });
+
+            counter++;
+        }
+
+        return result;
     }
 
     /**
@@ -529,8 +609,14 @@ export class NetlistGenerator {
         // If probes are placed, only output probed nodes (excluding ground)
         if (probeInfo && probeInfo.length > 0) {
             return probeInfo
-                .filter(probe => !probe.isGround && probe.node !== '0')
-                .map(probe => `v(${probe.node})`);
+                .map(probe => {
+                    if (probe.type === 'current' && probe.sourceName) {
+                        return `i(${probe.sourceName})`;
+                    }
+                    if (!probe.node || probe.isGround || probe.node === '0') return null;
+                    return `v(${probe.node})`;
+                })
+                .filter(Boolean);
         }
 
         // Fall back to all nets if no probes (excluding ground)
@@ -538,5 +624,27 @@ export class NetlistGenerator {
         return netNames
             .filter(name => name !== '0')
             .map(name => `v(${name})`);
+    }
+
+    _sanitizeIdentifier(name, fallback, options = {}) {
+        const { allowLeadingDigit = false } = options;
+        const raw = (name || '').toString().trim();
+        const cleaned = raw.replace(/[^a-zA-Z0-9_]/g, '_');
+        const base = cleaned || fallback;
+        if (!allowLeadingDigit && /^\d/.test(base)) {
+            return `_${base}`;
+        }
+        return base;
+    }
+
+    _makeUniqueName(base, usedSet) {
+        let candidate = base;
+        let suffix = 1;
+        while (usedSet.has(candidate)) {
+            candidate = `${base}_${suffix}`;
+            suffix++;
+        }
+        usedSet.add(candidate);
+        return candidate;
     }
 }

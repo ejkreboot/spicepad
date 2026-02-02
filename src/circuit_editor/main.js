@@ -80,6 +80,11 @@ class CircuitEditorApp {
 
         // Component placement
         this._setupPlacement();
+        
+        // Component drag end callback for auto-connection
+        this.componentManager.onComponentDragEnd = (component) => {
+            this._autoConnectPinsToWires(component);
+        };
 
         // Ghost preview
         this._setupGhostPreview();
@@ -195,13 +200,15 @@ class CircuitEditorApp {
                 this.probeManager.setProbeType(probeType);
                 
                 // Update active state
-                probeTypeButtons.forEach(b => b.classList.remove('active'));
-                btn.classList.add('active');
+                this._setActiveProbeTypeButton(probeType);
                 
                 // Re-render to show updated ghost preview
                 this.viewport.render();
             });
         });
+
+        // Sync initial state
+        this._setActiveProbeTypeButton(this.probeManager.getProbeType());
     }
     
     /**
@@ -213,6 +220,11 @@ class CircuitEditorApp {
         if (probeTypeSelector) {
             probeTypeSelector.style.display = tool === 'probe' ? 'inline-flex' : 'none';
         }
+    }
+
+    _setActiveProbeTypeButton(probeType) {
+        const buttons = document.querySelectorAll('.probe-type-btn');
+        buttons.forEach(b => b.classList.toggle('active', b.dataset.probeType === probeType));
     }
 
     async _loadComponentLibrary() {
@@ -346,6 +358,19 @@ class CircuitEditorApp {
         list.querySelectorAll('.component-item').forEach(item => {
             item.classList.toggle('selected', item.dataset.componentId === componentId);
         });
+        
+        // Deselect all tool buttons (action buttons) when a component is selected
+        const toolButtons = document.querySelectorAll('.tool-btn');
+        toolButtons.forEach(btn => btn.classList.remove('active'));
+        
+        // Clear the current tool to indicate component placement mode
+        this._currentTool = null;
+        this.wireEditor.setActive(false);
+        this.probeManager.setGhostPosition(null);
+        this.canvas.style.cursor = 'crosshair';
+        
+        // Hide probe type selector since we're in component placement mode
+        this._updateProbeTypeSelector(null);
     }
 
     _clearSelection() {
@@ -376,6 +401,7 @@ class CircuitEditorApp {
                 this._clearSelection();
                 this.wireEditor.setActive(false);
                 this.canvas.style.cursor = 'crosshair';
+                this._setActiveProbeTypeButton(this.probeManager.getProbeType());
                 break;
             case 'delete':
                 this._clearSelection();
@@ -1565,6 +1591,9 @@ class CircuitEditorApp {
         });
 		
         this.componentManager.addComponent(component);
+        
+        // Auto-connect pins to wires if they land on wire segments
+        this._autoConnectPinsToWires(component);
 		
         // Record state after for redo
         const lastAction = this.undoManager.undoStack[this.undoManager.undoStack.length - 1];
@@ -1580,6 +1609,81 @@ class CircuitEditorApp {
         const next = (this._designatorCounters.get(prefix) ?? 0) + 1;
         this._designatorCounters.set(prefix, next);
         return `${prefix}${next}`;
+    }
+    
+    /**
+     * Auto-connect component pins to existing wires when a component is placed
+     * @param {import('./Component.js').Component} component 
+     */
+    _autoConnectPinsToWires(component) {
+        const pinMap = this.componentManager.pinNodeIdsByComponent.get(component.id);
+        if (!pinMap) return;
+        
+        const tolerance = 3; // Tolerance for detecting if pin is on a wire
+        
+        for (const pin of component.pins) {
+            const pinPos = component.getPinWorldPosition(pin);
+            const pinNodeId = pinMap.get(pin.id);
+            if (!pinNodeId) continue;
+            
+            // Check if there's a wire segment at this pin's position
+            const segmentHit = this.wireGraph.getSegmentAt(pinPos.x, pinPos.y, tolerance);
+            if (!segmentHit) continue;
+            
+            const segment = segmentHit.segment;
+            const node1 = this.wireGraph.getNode(segment.nodeId1);
+            const node2 = this.wireGraph.getNode(segment.nodeId2);
+            if (!node1 || !node2) continue;
+            
+            // Don't connect if either end of the segment is already this pin's node
+            if (segment.nodeId1 === pinNodeId || segment.nodeId2 === pinNodeId) continue;
+            
+            // Check if there's already a node at the pin position (might be from a wire vertex)
+            const existingNode = this.wireGraph.getNodeAt(pinPos.x, pinPos.y, tolerance);
+            
+            if (existingNode && existingNode.id !== pinNodeId) {
+                // There's an existing wire node at this position
+                // Merge the pin node with the existing node by transferring connections
+                
+                // Get all segments connected to the existing node
+                const connectedSegments = this.wireGraph.getSegmentsForNode(existingNode.id);
+                
+                // Remove the existing node (this will remove its segments)
+                this.wireGraph.removeNode(existingNode.id);
+                
+                // Reconnect all segments to the pin node instead
+                for (const seg of connectedSegments) {
+                    const otherId = seg.nodeId1 === existingNode.id ? seg.nodeId2 : seg.nodeId1;
+                    if (otherId !== pinNodeId) {
+                        this.wireGraph.addSegment(pinNodeId, otherId);
+                    }
+                }
+            } else {
+                // No existing node, split the segment at the pin position
+                const segmentId = this.wireGraph._makeSegmentId(segment.nodeId1, segment.nodeId2);
+                
+                // Remove the segment
+                this.wireGraph.segments.delete(segmentId);
+                
+                // Update the pin node to the exact position on the wire (snap to wire)
+                let snapX = pinPos.x;
+                let snapY = pinPos.y;
+                
+                if (node1.x === node2.x) {
+                    // Vertical segment - snap X to segment
+                    snapX = node1.x;
+                } else if (node1.y === node2.y) {
+                    // Horizontal segment - snap Y to segment
+                    snapY = node1.y;
+                }
+                
+                this.wireGraph.updateNode(pinNodeId, snapX, snapY);
+                
+                // Connect the pin to both ends of the original segment
+                this.wireGraph.addSegment(segment.nodeId1, pinNodeId);
+                this.wireGraph.addSegment(pinNodeId, segment.nodeId2);
+            }
+        }
     }
     
     _updateToolButtons(activeTool) {

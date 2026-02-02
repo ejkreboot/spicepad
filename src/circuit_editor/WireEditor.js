@@ -29,7 +29,8 @@ export class WireEditor {
         
         // Colors
         this.wireColor = '#000000';
-        this.wireHighlightColor = '#f97316'; // Orange
+        this.wireHighlightColor = '#2563eb'; // Blue to match selection styling
+        this.wireLockedColor = '#ef4444'; // Red for non-draggable segments
         this.previewColor = 'rgba(0, 0, 0, 0.5)';
         this.nodeColor = '#000000';
         this.junctionColor = '#000000';
@@ -140,6 +141,11 @@ export class WireEditor {
                     this.dragOriginalSegments = this._captureSegmentsForNode(hitNode.id);
                 }
             } else if (hitSegment) {
+                // Do not allow dragging a segment anchored to a component pin
+                const seg = hitSegment.segment;
+                if (this._segmentHasComponentPin(seg)) {
+                    return;
+                }
                 // Prepare for potential segment drag
                 this.dragTarget = { type: 'segment', id: hitSegment.segment.id };
                 this.dragStartWorld = { ...snapped };
@@ -147,7 +153,6 @@ export class WireEditor {
                 this.dragMovedNodeIds = new Set();
                 this.dragBendNodes = new Map();
                 
-                const seg = hitSegment.segment;
                 const node1 = this.wireGraph.getNode(seg.nodeId1);
                 const node2 = this.wireGraph.getNode(seg.nodeId2);
                 if (node1) this.dragStartPositions.set(node1.id, { x: node1.x, y: node1.y });
@@ -170,14 +175,10 @@ export class WireEditor {
             const dy = worldY - this.mouseDownPos.y;
             const dist = Math.sqrt(dx * dx + dy * dy);
             
-            if (dist > this.dragThreshold / this.viewport.zoom) {
+            if (dist > this.dragThreshold / this.viewport.zoom && this.dragTarget) {
                 this.isDragging = true;
-                
-                // Start dragging if we have a target
-                if (this.dragTarget) {
-                    this.mode = 'dragging';
-                    this._setStatus(`Dragging ${this.dragTarget.type}...`);
-                }
+                this.mode = 'dragging';
+                this._setStatus(`Dragging ${this.dragTarget.type}...`);
             }
         }
         
@@ -812,7 +813,10 @@ export class WireEditor {
         if (!node1 || !node2) return;
         
         const isSelected = this.selectedSegmentIds?.has(segment.id);
-        const color = (isSelected || isHovered) ? this.wireHighlightColor : this.wireColor;
+        const isLocked = this._segmentHasComponentPin(segment);
+        const color = (isSelected || isHovered)
+            ? (isLocked ? this.wireLockedColor : this.wireHighlightColor)
+            : this.wireColor;
         const lineWidth = isSelected ? 3 : (isHovered ? 3 : 2);
         
         viewport.drawLine(node1.x, node1.y, node2.x, node2.y, color, lineWidth);
@@ -839,6 +843,12 @@ export class WireEditor {
         
         // Draw endpoint indicator
         viewport.drawCircle(path.end.x, path.end.y, 4 / viewport.zoom, null, this.previewColor, 2);
+    }
+
+    _segmentHasComponentPin(segment) {
+        const node1 = this.wireGraph.getNode(segment.nodeId1);
+        const node2 = this.wireGraph.getNode(segment.nodeId2);
+        return Boolean((node1 && node1.isComponentPin) || (node2 && node2.isComponentPin));
     }
     
     // ==================== Public API ====================

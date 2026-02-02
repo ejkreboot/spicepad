@@ -1510,6 +1510,54 @@ main {
     border-color: #2563eb;
 }
 
+/* Probe Type Selector */
+.probe-type-selector {
+    display: inline-flex;
+    gap: 4px;
+    align-items: center;
+    padding: 2px;
+    background: #f1f5f9;
+    border-radius: 6px;
+    margin-left: 4px;
+}
+
+.probe-type-btn {
+    min-width: 36px;
+    padding: 4px 8px;
+    font-size: 12px;
+    font-weight: 600;
+    border-radius: 4px;
+    transition: all 0.15s ease;
+}
+
+.probe-type-btn .material-symbols-outlined {
+    font-size: 16px;
+}
+
+.probe-type-btn.active {
+    background: #3b82f6;
+    color: #fff;
+    border-color: #3b82f6;
+    box-shadow: 0 1px 2px rgba(59, 130, 246, 0.2);
+}
+
+.probe-type-btn.active:hover {
+    background: #2563eb;
+    border-color: #2563eb;
+}
+
+.probe-type-btn:not(.active) {
+    background: transparent;
+    color: #64748b;
+    border-color: transparent;
+}
+
+.probe-type-btn:not(.active):hover {
+    background: #e2e8f0;
+    color: #334155;
+    border-color: transparent;
+}
+
 .circuit-canvas-wrapper {
     flex: 1;
     position: relative;

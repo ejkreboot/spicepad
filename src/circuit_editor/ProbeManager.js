@@ -24,14 +24,14 @@ export class ProbeManager {
         
         // Color palette for probes - cycles through these colors
         this.colorPalette = [
-            { stroke: '#3b82f6', fill: '#dbeafe', label: '#1e40af' },  // Blue
-            { stroke: '#ef4444', fill: '#fee2e2', label: '#991b1b' },  // Red
-            { stroke: '#10b981', fill: '#d1fae5', label: '#065f46' },  // Emerald
-            { stroke: '#f59e0b', fill: '#fef3c7', label: '#92400e' },  // Amber
-            { stroke: '#8b5cf6', fill: '#ede9fe', label: '#5b21b6' },  // Violet
-            { stroke: '#ec4899', fill: '#fce7f3', label: '#9d174d' },  // Pink
-            { stroke: '#06b6d4', fill: '#cffafe', label: '#155e75' },  // Cyan
-            { stroke: '#84cc16', fill: '#ecfccb', label: '#3f6212' },  // Lime
+            { stroke: '#2563eb', fill: '#60a5fa', label: '#1e3a8a' },  // Blue - vibrant and visible
+            { stroke: '#dc2626', fill: '#f87171', label: '#7f1d1d' },  // Red - bold and clear
+            { stroke: '#059669', fill: '#34d399', label: '#064e3b' },  // Emerald - bright green
+            { stroke: '#d97706', fill: '#fbbf24', label: '#78350f' },  // Amber - golden yellow
+            { stroke: '#7c3aed', fill: '#a78bfa', label: '#4c1d95' },  // Violet - rich purple
+            { stroke: '#db2777', fill: '#f472b6', label: '#831843' },  // Pink - hot pink
+            { stroke: '#0891b2', fill: '#22d3ee', label: '#164e63' },  // Cyan - bright aqua
+            { stroke: '#65a30d', fill: '#a3e635', label: '#365314' },  // Lime - vivid lime
         ];
         this._colorIndex = 0;
         
@@ -46,6 +46,8 @@ export class ProbeManager {
         this.probeRadius = 6;
         this.tailLength = 12;
         this.hitTolerance = 8;
+        this._probeType = 'voltage';
+        this.probeIconScale = 0.6; // Scale factor from SVG units to screen
         
         // Ghost preview state
         this._ghostPosition = null;
@@ -91,7 +93,8 @@ export class ProbeManager {
             nodeId: null, // Will be set when connected to a wire
             color: colorSet.stroke,
             fillColor: colorSet.fill,
-            labelColor: colorSet.label
+            labelColor: colorSet.label,
+            type: this._probeType
         };
         
         // Try to connect to nearest wire node
@@ -100,6 +103,10 @@ export class ProbeManager {
         this.probes.push(probe);
         this.viewport.render();
         return probe;
+    }
+
+    getProbeType() {
+        return this._probeType;
     }
     
     /**
@@ -125,10 +132,56 @@ export class ProbeManager {
      */
     getProbeAt(worldX, worldY) {
         for (const probe of this.probes) {
+            // Check if click is within the entire probe body
+            // The probe icon is approximately 24x48 units in SVG space, scaled by probeIconScale
             const tipPos = this._getProbeTipPosition(probe);
-            const dx = tipPos.x - worldX;
-            const dy = tipPos.y - worldY;
-            if (Math.sqrt(dx * dx + dy * dy) <= this.hitTolerance) {
+            const rotation = probe.rotation || 0;
+            const scale = this.probeIconScale;
+            
+            // Probe dimensions in world space (approximate bounding box)
+            const width = 24 * scale;  // SVG width is 24
+            const height = 46 * scale; // SVG height from tip to top is 46
+            
+            // Calculate the probe's bounding box center and dimensions based on rotation
+            let centerX, centerY, halfWidth, halfHeight;
+            
+            switch (rotation) {
+                case 0: // Tip points down, body extends up
+                    centerX = tipPos.x;
+                    centerY = tipPos.y - height / 2;
+                    halfWidth = width / 2;
+                    halfHeight = height / 2;
+                    break;
+                case 90: // Tip points left, body extends right
+                    centerX = tipPos.x + height / 2;
+                    centerY = tipPos.y;
+                    halfWidth = height / 2;
+                    halfHeight = width / 2;
+                    break;
+                case 180: // Tip points up, body extends down
+                    centerX = tipPos.x;
+                    centerY = tipPos.y + height / 2;
+                    halfWidth = width / 2;
+                    halfHeight = height / 2;
+                    break;
+                case 270: // Tip points right, body extends left
+                    centerX = tipPos.x - height / 2;
+                    centerY = tipPos.y;
+                    halfWidth = height / 2;
+                    halfHeight = width / 2;
+                    break;
+                default:
+                    centerX = tipPos.x;
+                    centerY = tipPos.y - height / 2;
+                    halfWidth = width / 2;
+                    halfHeight = height / 2;
+            }
+            
+            // Check if point is within the bounding box
+            const dx = Math.abs(worldX - centerX);
+            const dy = Math.abs(worldY - centerY);
+            
+            if (dx <= halfWidth && dy <= halfHeight) {
                 return probe;
             }
         }
@@ -171,7 +224,8 @@ export class ProbeManager {
             nodeId: probe.nodeId,
             x: probe.x,
             y: probe.y,
-            color: probe.color || '#3b82f6'
+            color: probe.color || '#3b82f6',
+            type: probe.type || 'voltage'
         }));
     }
     
@@ -234,7 +288,8 @@ export class ProbeManager {
             nodeId: p.nodeId,
             color: p.color,
             fillColor: p.fillColor,
-            labelColor: p.labelColor
+            labelColor: p.labelColor,
+            type: p.type || 'voltage'
         }));
     }
     
@@ -278,7 +333,8 @@ export class ProbeManager {
                 nodeId: item.nodeId || null,
                 color,
                 fillColor,
-                labelColor
+                labelColor,
+                type: item.type || 'voltage'
             };
             
             // Re-connect to wire node at current position
@@ -367,6 +423,32 @@ export class ProbeManager {
         
         this.viewport.render();
         return true;
+    }
+
+    setProbeType(type) {
+        this._probeType = type === 'current' ? 'current' : 'voltage';
+        this.viewport.render();
+    }
+
+    updateProbeType(probeId, type) {
+        const probe = this.probes.find(p => p.id === probeId);
+        if (!probe) return;
+        probe.type = type === 'current' ? 'current' : 'voltage';
+        this.viewport.render();
+    }
+
+    updateProbeColor(probeId, color) {
+        const probe = this.probes.find(p => p.id === probeId);
+        if (!probe || !color) return;
+        probe.color = color;
+        probe.fillColor = this._tintColor(color, 0.82);
+        probe.labelColor = this._darkenColor(color, 0.55);
+        this.viewport.render();
+    }
+
+    isProbeLabelUnique(label, excludeId = null) {
+        const target = label.trim().toLowerCase();
+        return !this.probes.some(p => p.id !== excludeId && (p.label || '').trim().toLowerCase() === target);
     }
     
     // ==================== Private Methods ====================
@@ -508,13 +590,10 @@ export class ProbeManager {
     
     _renderProbe(ctx, viewport, probe, isSelected = false) {
         const tipPos = this._getProbeTipPosition(probe);
-        const bodyCenter = this._getProbeBodyCenter(probe);
         const rotation = probe.rotation || 0;
-        
-        // Check if probe is on ground net
         const isOnGround = this._isProbeOnGround(probe);
-        
-        // Use grayed colors for ground probes, otherwise use probe's assigned color
+        const type = probe.type || 'voltage';
+
         let strokeColor, fillColor, labelColor;
         if (isOnGround) {
             strokeColor = this.groundProbeStyle.stroke;
@@ -525,82 +604,66 @@ export class ProbeManager {
             fillColor = probe.fillColor || '#dbeafe';
             labelColor = probe.labelColor || '#1e40af';
         }
-        
+
         const hoverStroke = this._darkenColor(strokeColor);
         const hoverFill = '#fecdd3';
-        
+
         ctx.save();
-        
-        // Convert world coordinates to screen coordinates
+
         const tipScreen = viewport.worldToScreen(tipPos.x, tipPos.y);
-        const bodyScreen = viewport.worldToScreen(bodyCenter.x, bodyCenter.y);
-        
-        // Draw connecting line (tail)
-        ctx.strokeStyle = isSelected ? hoverStroke : strokeColor;
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(tipScreen.x, tipScreen.y);
-        ctx.lineTo(bodyScreen.x, bodyScreen.y);
-        ctx.stroke();
-        
-        // Draw probe circle (body)
-        const radius = this.probeRadius * viewport.zoom;
-        ctx.beginPath();
-        ctx.arc(bodyScreen.x, bodyScreen.y, radius, 0, Math.PI * 2);
-        ctx.fillStyle = isSelected ? hoverFill : fillColor;
-        ctx.fill();
-        ctx.strokeStyle = isSelected ? hoverStroke : strokeColor;
-        ctx.lineWidth = 2;
-        ctx.stroke();
-        
-        // Draw tip dot
-        ctx.beginPath();
-        ctx.arc(tipScreen.x, tipScreen.y, 3 * viewport.zoom, 0, Math.PI * 2);
-        ctx.fillStyle = isSelected ? hoverStroke : strokeColor;
-        ctx.fill();
-        
-        // Draw label (use the labelColor determined earlier based on ground status)
+        const scale = this.probeIconScale * viewport.zoom;
+        const stroke = isSelected ? hoverStroke : strokeColor;
+        const fill = isSelected ? hoverFill : fillColor;
+
+        ctx.translate(tipScreen.x, tipScreen.y);
+        ctx.rotate((rotation * Math.PI) / 180);
+        ctx.scale(scale, scale);
+        ctx.translate(-12, -46); // Align SVG coordinate system so tip lands at origin
+
+        this._drawProbeIcon(ctx, type, stroke, fill);
+
+        ctx.restore();
+
+        // Labels are drawn in screen space for consistency with previous behavior
+        ctx.save();
         ctx.fillStyle = labelColor;
         ctx.font = `bold ${10 * viewport.zoom}px -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        
-        // Position label based on rotation
-        let labelX = bodyScreen.x;
-        let labelY = bodyScreen.y;
-        const labelOffset = (this.probeRadius + 10) * viewport.zoom;
-        
+
+        let labelX = tipScreen.x;
+        let labelY = tipScreen.y;
+        const labelOffset = 34 * viewport.zoom;
+
         switch (rotation) {
-            case 0: // Label above
-                labelY = bodyScreen.y - labelOffset;
+            case 0:
+                labelY = tipScreen.y - labelOffset;
                 break;
-            case 90: // Label to right
-                labelX = bodyScreen.x + labelOffset;
+            case 90:
+                labelX = tipScreen.x + labelOffset;
                 ctx.textAlign = 'left';
                 break;
-            case 180: // Label below
-                labelY = bodyScreen.y + labelOffset;
+            case 180:
+                labelY = tipScreen.y + labelOffset;
                 break;
-            case 270: // Label to left
-                labelX = bodyScreen.x - labelOffset;
+            case 270:
+                labelX = tipScreen.x - labelOffset;
                 ctx.textAlign = 'right';
                 break;
         }
-        
-        // Add "(GND)" suffix for ground probes to indicate they'll be ignored
+
         const displayLabel = isOnGround ? `${probe.label} (GND)` : probe.label;
         ctx.fillText(displayLabel, labelX, labelY);
-        
-        // Draw connection indicator if connected to a node
+
+        // Connection indicator ring around the contact point
         if (probe.nodeId !== null) {
             ctx.beginPath();
-            ctx.arc(tipScreen.x, tipScreen.y, 5 * viewport.zoom, 0, Math.PI * 2);
-            // Use orange for ground connection, green for normal
-            ctx.strokeStyle = isOnGround ? '#f59e0b' : '#10b981';
+            ctx.arc(tipScreen.x, tipScreen.y, 6 * viewport.zoom, 0, Math.PI * 2);
+            ctx.strokeStyle = isOnGround ? '#f59e0b' : '#3b82f6';
             ctx.lineWidth = 1.5;
             ctx.stroke();
         }
-        
+
         ctx.restore();
     }
     
@@ -618,7 +681,8 @@ export class ProbeManager {
             nodeId: null,
             color: colorSet.stroke,
             fillColor: colorSet.fill,
-            labelColor: colorSet.label
+            labelColor: colorSet.label,
+            type: this._probeType
         };
         
         // Check if ghost would connect to a node
@@ -643,12 +707,134 @@ export class ProbeManager {
      * @param {string} hex
      * @returns {string}
      */
-    _darkenColor(hex) {
+    _darkenColor(hex, factor = 0.7) {
         const r = parseInt(hex.slice(1, 3), 16);
         const g = parseInt(hex.slice(3, 5), 16);
         const b = parseInt(hex.slice(5, 7), 16);
-        const factor = 0.7;
         return `#${Math.round(r * factor).toString(16).padStart(2, '0')}${Math.round(g * factor).toString(16).padStart(2, '0')}${Math.round(b * factor).toString(16).padStart(2, '0')}`;
+    }
+
+    _tintColor(hex, factor = 0.85) {
+        const r = parseInt(hex.slice(1, 3), 16);
+        const g = parseInt(hex.slice(3, 5), 16);
+        const b = parseInt(hex.slice(5, 7), 16);
+        const mix = (v) => Math.min(255, Math.round(v + (255 - v) * (1 - factor)));
+        return `#${mix(r).toString(16).padStart(2, '0')}${mix(g).toString(16).padStart(2, '0')}${mix(b).toString(16).padStart(2, '0')}`;
+    }
+
+    _roundedRectPath(x, y, w, h, r) {
+        const p = new Path2D();
+        const rr = Math.min(r, w / 2, h / 2);
+        p.moveTo(x + rr, y);
+        p.lineTo(x + w - rr, y);
+        p.quadraticCurveTo(x + w, y, x + w, y + rr);
+        p.lineTo(x + w, y + h - rr);
+        p.quadraticCurveTo(x + w, y + h, x + w - rr, y + h);
+        p.lineTo(x + rr, y + h);
+        p.quadraticCurveTo(x, y + h, x, y + h - rr);
+        p.lineTo(x, y + rr);
+        p.quadraticCurveTo(x, y, x + rr, y);
+        p.closePath();
+        return p;
+    }
+
+    _drawProbeIcon(ctx, type, stroke, fill) {
+        if (type === 'current') {
+            this._drawCurrentProbeIcon(ctx, stroke, fill);
+        } else {
+            this._drawVoltageProbeIcon(ctx, stroke, fill);
+        }
+    }
+
+    _drawVoltageProbeIcon(ctx, stroke, fill) {
+        ctx.lineWidth = 2;
+        ctx.lineJoin = 'round';
+        ctx.lineCap = 'round';
+
+        // Upper handle outline
+        const handle = new Path2D('M7 6 L7 12.25 L17 12.25 L17 6 Q17 0 12 0 Q7 0 7 6 Z');
+        ctx.strokeStyle = stroke;
+        ctx.stroke(handle);
+
+        // Lever (rounded rect)
+        const lever = this._roundedRectPath(2.5, 7.75, 19, 4.5, 2.25);
+        ctx.fillStyle = stroke;
+        ctx.fill(lever);
+
+        // Short barrel below lever
+        ctx.beginPath();
+        ctx.moveTo(7, 12.25);
+        ctx.lineTo(7, 18);
+        ctx.moveTo(17, 12.25);
+        ctx.lineTo(17, 18);
+        ctx.stroke();
+
+        // Convex taper narrowing to shaft
+        ctx.beginPath();
+        ctx.moveTo(7, 18);
+        ctx.bezierCurveTo(7, 21, 10, 23, 10, 24);
+        ctx.moveTo(17, 18);
+        ctx.bezierCurveTo(17, 21, 14, 23, 14, 24);
+        ctx.stroke();
+
+        // Straight shaft down
+        ctx.beginPath();
+        ctx.moveTo(10, 24);
+        ctx.lineTo(10, 39.5);
+        ctx.moveTo(14, 24);
+        ctx.lineTo(14, 39.5);
+        ctx.stroke();
+
+        // Shaft edges angle in to meet pin
+        ctx.beginPath();
+        ctx.moveTo(10, 39.5);
+        ctx.lineTo(12, 41);
+        ctx.moveTo(14, 39.5);
+        ctx.lineTo(12, 41);
+        ctx.stroke();
+
+        // Short pin to dot
+        ctx.beginPath();
+        ctx.moveTo(12, 41);
+        ctx.lineTo(12, 44);
+        ctx.stroke();
+
+        // Contact dot
+        ctx.beginPath();
+        ctx.arc(12, 46, 2, 0, Math.PI * 2);
+        ctx.fillStyle = fill;
+        ctx.fill();
+    }
+
+    _drawCurrentProbeIcon(ctx, stroke, fill) {
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+
+        // Upper handle (filled)
+        const handle = new Path2D('M7 6 L7 12.25 L17 12.25 L17 6 Q17 0 12 0 Q7 0 7 6 Z');
+        ctx.fillStyle = fill;
+        ctx.fill(handle);
+
+        // Lever
+        const lever = this._roundedRectPath(2.5, 7.75, 19, 4.5, 2.25);
+        ctx.fill(lever);
+
+        // Lower body: barrel + taper + shaft + angle-in (filled)
+        const body = new Path2D('M7 12.25 L7 18 C7 21 10 23 10 24 L10 39.5 L12 41 L14 39.5 L14 24 C14 23 17 21 17 18 L17 12.25 Z');
+        ctx.fill(body);
+
+        // Pin
+        ctx.beginPath();
+        ctx.strokeStyle = stroke;
+        ctx.lineWidth = 1.2;
+        ctx.moveTo(12, 41);
+        ctx.lineTo(12, 43.5);
+        ctx.stroke();
+
+        // Contact circle
+        ctx.beginPath();
+        ctx.arc(12, 46.25, 2.75, 0, Math.PI * 2);
+        ctx.stroke();
     }
 }
 
@@ -663,4 +849,5 @@ export class ProbeManager {
  * @property {string} color - Stroke color for the probe
  * @property {string} fillColor - Fill color for the probe body
  * @property {string} labelColor - Color for the label text
+ * @property {string} type - Probe type ('voltage' | 'current')
  */

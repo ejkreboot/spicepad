@@ -41,6 +41,9 @@ export class ComponentManager {
 		this.ghostPin = '#64748b';
 		this.ghostOpacity = 0.45;
         
+		// Callbacks
+		this.onComponentDragEnd = null; // (component) => void - called when component drag ends
+        
 		this._setupEventHandlers();
 		this._setupRendering();
 	}
@@ -231,12 +234,20 @@ export class ComponentManager {
 		}
 		if (!this.isDragging) return false;
         
+		// Notify that component drag has ended (before clearing drag state)
+		const draggedComponent = this.dragComponent;
+        
 		this.isDragging = false;
 		this.dragComponent = null;
 		this.dragStartWorld = null;
 		this.dragStartPos = null;
         
 		this.wireGraph.cleanup();
+        
+		// Call callback to handle auto-connection
+		if (draggedComponent && this.onComponentDragEnd) {
+			this.onComponentDragEnd(draggedComponent);
+		}
         
 		this.viewport.render();
 		return true;
