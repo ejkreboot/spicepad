@@ -20,6 +20,8 @@ import { UndoManager, UNDO_TYPES } from './UndoManager.js';
 import { loadLibrary, replaceLibrary } from '../common/storage/library.js';
 import { DEFAULT_COMPONENT_LIBRARY } from '../common/defaultComponents.js';
 import { createComponentFromDefinition, Component } from './Component.js';
+import { TextManager } from './TextManager.js';
+import { TextEditor } from './TextEditor.js';
 
 class CircuitEditorApp {
     constructor() {
@@ -38,18 +40,24 @@ class CircuitEditorApp {
         this.wireGraph = new WireGraph();
         
         this.wireEditor = new WireEditor(this.viewport, this.wireGraph);
-        this.componentManager = new ComponentManager(this.viewport, this.wireGraph);
+        this.componentManager = new ComponentManager(this.viewport, this.wireGraph, {
+            isComponentInteractionEnabled: () => this._currentTool === 'select' && !this.wireEditor.isActive
+        });
         this.selectionManager = new SelectionManager({
             viewport: this.viewport,
             wireGraph: this.wireGraph,
             componentManager: this.componentManager,
             wireEditor: this.wireEditor,
-            isSelectionEnabled: () => !this.wireEditor.isActive && !this.selectedComponentId && this._currentTool !== 'probe',
+            isSelectionEnabled: () => !this.wireEditor.isActive && !this.selectedComponentId && this._currentTool !== 'probe' && this._currentTool !== 'text',
             onGroupDragComplete: (moveData) => this._onGroupDragComplete(moveData)
         });
         this.netlistGenerator = new NetlistGenerator(this.componentManager, this.wireGraph);
         this.probeManager = new ProbeManager(this.viewport, this.wireGraph, this.componentManager);
         this.netlistGenerator.setProbeManager(this.probeManager);
+        this.textManager = new TextManager(this.viewport, {
+            isTextDragEnabled: () => this._currentTool !== 'text'
+        });
+        this.textEditor = new TextEditor(this.viewport, this.textManager);
         this.undoManager = new UndoManager();
         this._componentCounter = 1;
         this._designatorCounters = new Map();
@@ -63,7 +71,7 @@ class CircuitEditorApp {
         this._subcircuitModalResolver = null;
         this._subcircuitModalEls = null;
         this._autoSaveInterval = null;
-        this._currentTool = 'select'; // Track current tool: 'select', 'wire', 'probe'
+        this._currentTool = 'select'; // Track current tool: 'select', 'wire', 'probe', 'text'
         this._plotCounter = 0; // Unique plot IDs
         
         // Simulation directives
@@ -80,11 +88,6 @@ class CircuitEditorApp {
 
         // Component placement
         this._setupPlacement();
-        
-        // Component drag end callback for auto-connection
-        this.componentManager.onComponentDragEnd = (component) => {
-            this._autoConnectPinsToWires(component);
-        };
 
         // Ghost preview
         this._setupGhostPreview();
@@ -157,6 +160,9 @@ class CircuitEditorApp {
             this.wireEditor.onStatusChange = (message) => {
                 statusMessage.textContent = message;
             };
+            this.textEditor.onStatusChange = (message) => {
+                statusMessage.textContent = message;
+            };
         }
         
         // Clear button
@@ -168,6 +174,7 @@ class CircuitEditorApp {
                     this.componentManager.components = [];
                     this.componentManager.pinNodeIdsByComponent.clear();
                     this.probeManager.clear();
+                    this.textManager.clear();
                     this._componentCounter = 1;
                     this._designatorCounters.clear();
                     this._saveToLocalStorage();
@@ -200,21 +207,13 @@ class CircuitEditorApp {
                 this.probeManager.setProbeType(probeType);
                 
                 // Update active state
-                this._setActiveProbeTypeButton(probeType);
+                probeTypeButtons.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
                 
                 // Re-render to show updated ghost preview
                 this.viewport.render();
             });
         });
-
-        // Sync initial state
-        this._setActiveProbeTypeButton(this.probeManager.getProbeType());
-        
-        // Console copy button
-        const consoleCopyBtn = document.getElementById('console-copy-btn');
-        if (consoleCopyBtn) {
-            consoleCopyBtn.addEventListener('click', () => this._copyConsoleOutput());
-        }
     }
     
     /**
@@ -226,11 +225,6 @@ class CircuitEditorApp {
         if (probeTypeSelector) {
             probeTypeSelector.style.display = tool === 'probe' ? 'inline-flex' : 'none';
         }
-    }
-
-    _setActiveProbeTypeButton(probeType) {
-        const buttons = document.querySelectorAll('.probe-type-btn');
-        buttons.forEach(b => b.classList.toggle('active', b.dataset.probeType === probeType));
     }
 
     async _loadComponentLibrary() {
@@ -337,6 +331,24 @@ class CircuitEditorApp {
         });
         list.appendChild(wireTool);
 
+        const textTool = document.createElement('div');
+        textTool.className = 'component-item tool-item tool-btn';
+        textTool.dataset.tool = 'text';
+        textTool.title = 'Text Tool (T)';
+        textTool.innerHTML = `
+            <div class="component-thumb">
+                <span class="material-symbols-outlined">text_fields</span>
+            </div>
+            <div class="component-meta">
+                <div class="component-name">Text Tool</div>
+            </div>
+        `;
+        textTool.addEventListener('click', () => {
+            this._setTool('text');
+            this._updateToolButtons('text');
+        });
+        list.appendChild(textTool);
+
         for (const [id, definition] of entries) {
             const item = document.createElement('div');
             item.className = 'component-item';
@@ -364,19 +376,6 @@ class CircuitEditorApp {
         list.querySelectorAll('.component-item').forEach(item => {
             item.classList.toggle('selected', item.dataset.componentId === componentId);
         });
-        
-        // Deselect all tool buttons (action buttons) when a component is selected
-        const toolButtons = document.querySelectorAll('.tool-btn');
-        toolButtons.forEach(btn => btn.classList.remove('active'));
-        
-        // Clear the current tool to indicate component placement mode
-        this._currentTool = null;
-        this.wireEditor.setActive(false);
-        this.probeManager.setGhostPosition(null);
-        this.canvas.style.cursor = 'crosshair';
-        
-        // Hide probe type selector since we're in component placement mode
-        this._updateProbeTypeSelector(null);
     }
 
     _clearSelection() {
@@ -400,24 +399,34 @@ class CircuitEditorApp {
             case 'wire':
                 this._clearSelection();
                 this.wireEditor.setActive(true);
+                this.textEditor.setActive(false);
                 this.probeManager.setGhostPosition(null);
                 this.canvas.style.cursor = 'crosshair';
                 break;
             case 'probe':
                 this._clearSelection();
                 this.wireEditor.setActive(false);
+                this.textEditor.setActive(false);
                 this.canvas.style.cursor = 'crosshair';
-                this._setActiveProbeTypeButton(this.probeManager.getProbeType());
+                break;
+            case 'text':
+                this._clearSelection();
+                this.wireEditor.setActive(false);
+                this.textEditor.setActive(true);
+                this.probeManager.setGhostPosition(null);
+                this.canvas.style.cursor = 'text';
                 break;
             case 'delete':
                 this._clearSelection();
                 this.wireEditor.setActive(false);
+                this.textEditor.setActive(false);
                 this.probeManager.setGhostPosition(null);
                 this.canvas.style.cursor = 'not-allowed';
                 break;
             case 'select':
                 this._clearSelection();
                 this.wireEditor.setActive(false);
+                this.textEditor.setActive(false);
                 this.probeManager.setGhostPosition(null);
                 this.canvas.style.cursor = 'default';
                 break;
@@ -442,6 +451,12 @@ class CircuitEditorApp {
 
             // When typing in inputs outside modals, avoid stealing keys like Delete/Backspace.
             if (isFormField) return;
+            
+            // Let text editor handle first when editing
+            if (this.textEditor.handleKeyDown(event)) {
+                return;
+            }
+            
             if (event.key === 'Escape') {
                 this.wireEditor.handleKeyDown(event);
                 this._clearSelection();
@@ -500,6 +515,12 @@ class CircuitEditorApp {
                     if (!event.ctrlKey && !event.metaKey) {
                         this._setTool('probe');
                         this._updateToolButtons('probe');
+                    }
+                    break;
+                case 't':
+                    if (!event.ctrlKey && !event.metaKey) {
+                        this._setTool('text');
+                        this._updateToolButtons('text');
                     }
                     break;
                 case 'd':
@@ -570,6 +591,25 @@ class CircuitEditorApp {
             }
         }
         
+        // Delete selected text
+        if (this.textManager.selectedTextIds.size > 0) {
+            for (const textId of this.textManager.selectedTextIds) {
+                const text = this.textManager.getText(textId);
+                if (text) {
+                    this.undoManager.recordAction(UNDO_TYPES.FULL_STATE, {
+                        stateBefore: this._serialize(),
+                        description: 'Delete text'
+                    });
+                    this.textManager.removeText(textId);
+                    const lastAction = this.undoManager.undoStack[this.undoManager.undoStack.length - 1];
+                    if (lastAction) {
+                        lastAction.data.stateAfter = this._serialize();
+                    }
+                    deleted = true;
+                }
+            }
+        }
+        
         // Delete selected components and wires via SelectionManager
         if (this.selectionManager.deleteSelected()) {
             deleted = true;
@@ -597,6 +637,23 @@ class CircuitEditorApp {
             });
             this.probeManager.removeProbe(probe.id);
             deleted = true;
+        }
+        
+        // Check for text
+        if (!deleted) {
+            const text = this.textManager.getTextAt(worldX, worldY);
+            if (text) {
+                this.undoManager.recordAction(UNDO_TYPES.FULL_STATE, {
+                    stateBefore: this._serialize(),
+                    description: 'Delete text'
+                });
+                this.textManager.removeText(text.id);
+                const lastAction = this.undoManager.undoStack[this.undoManager.undoStack.length - 1];
+                if (lastAction) {
+                    lastAction.data.stateAfter = this._serialize();
+                }
+                deleted = true;
+            }
         }
         
         // Check for component
@@ -1106,14 +1163,10 @@ class CircuitEditorApp {
         const available = height - pinSpacing * (maxSide - 1);
         const topPadding = Math.max(grid, Math.round((available / 2) / grid) * grid);
 
-        const labelInset = Math.max(4, Math.round(grid * 0.6));
-        const pinRegionStart = topPadding;
-        const pinRegionEnd = topPadding + pinSpacing * (maxSide - 1);
-        const pinRegionCenter = pinRegionStart + (pinRegionEnd - pinRegionStart) / 2;
-        const valueLabelYOffset = Math.min(Math.round(grid * 1.2), Math.round(pinSpacing * 0.35));
-
         let width = Math.max(80, grid * 6);
         width = Math.ceil(width / grid) * grid;
+        const labelInset = Math.min(Math.max(10, Math.round(width * 0.2)), Math.max(grid, width / 2 - grid));
+
         const pinDefs = [];
         let idx = 0;
         for (let i = 0; i < leftCount; i += 1) {
@@ -1155,10 +1208,7 @@ class CircuitEditorApp {
                         { x: width / 2, y: height + 8 },
                         { x: width / 2, y: height + 8 }
                     ],
-                    value: [
-                        { x: width / 2, y: pinRegionCenter - valueLabelYOffset },
-                        { x: width / 2, y: pinRegionCenter - valueLabelYOffset }
-                    ]
+                    value: []
                 },
                 svg: null,
                 subcircuit: {
@@ -1434,6 +1484,12 @@ class CircuitEditorApp {
                 return;
             }
 
+            // Handle text tool
+            if (this._currentTool === 'text') {
+                originalOnClick?.(worldX, worldY, event);
+                return;
+            }
+
             if (!this.selectedComponentId) {
                 originalOnClick?.(worldX, worldY, event);
                 return;
@@ -1597,9 +1653,6 @@ class CircuitEditorApp {
         });
 		
         this.componentManager.addComponent(component);
-        
-        // Auto-connect pins to wires if they land on wire segments
-        this._autoConnectPinsToWires(component);
 		
         // Record state after for redo
         const lastAction = this.undoManager.undoStack[this.undoManager.undoStack.length - 1];
@@ -1615,81 +1668,6 @@ class CircuitEditorApp {
         const next = (this._designatorCounters.get(prefix) ?? 0) + 1;
         this._designatorCounters.set(prefix, next);
         return `${prefix}${next}`;
-    }
-    
-    /**
-     * Auto-connect component pins to existing wires when a component is placed
-     * @param {import('./Component.js').Component} component 
-     */
-    _autoConnectPinsToWires(component) {
-        const pinMap = this.componentManager.pinNodeIdsByComponent.get(component.id);
-        if (!pinMap) return;
-        
-        const tolerance = 3; // Tolerance for detecting if pin is on a wire
-        
-        for (const pin of component.pins) {
-            const pinPos = component.getPinWorldPosition(pin);
-            const pinNodeId = pinMap.get(pin.id);
-            if (!pinNodeId) continue;
-            
-            // Check if there's a wire segment at this pin's position
-            const segmentHit = this.wireGraph.getSegmentAt(pinPos.x, pinPos.y, tolerance);
-            if (!segmentHit) continue;
-            
-            const segment = segmentHit.segment;
-            const node1 = this.wireGraph.getNode(segment.nodeId1);
-            const node2 = this.wireGraph.getNode(segment.nodeId2);
-            if (!node1 || !node2) continue;
-            
-            // Don't connect if either end of the segment is already this pin's node
-            if (segment.nodeId1 === pinNodeId || segment.nodeId2 === pinNodeId) continue;
-            
-            // Check if there's already a node at the pin position (might be from a wire vertex)
-            const existingNode = this.wireGraph.getNodeAt(pinPos.x, pinPos.y, tolerance);
-            
-            if (existingNode && existingNode.id !== pinNodeId) {
-                // There's an existing wire node at this position
-                // Merge the pin node with the existing node by transferring connections
-                
-                // Get all segments connected to the existing node
-                const connectedSegments = this.wireGraph.getSegmentsForNode(existingNode.id);
-                
-                // Remove the existing node (this will remove its segments)
-                this.wireGraph.removeNode(existingNode.id);
-                
-                // Reconnect all segments to the pin node instead
-                for (const seg of connectedSegments) {
-                    const otherId = seg.nodeId1 === existingNode.id ? seg.nodeId2 : seg.nodeId1;
-                    if (otherId !== pinNodeId) {
-                        this.wireGraph.addSegment(pinNodeId, otherId);
-                    }
-                }
-            } else {
-                // No existing node, split the segment at the pin position
-                const segmentId = this.wireGraph._makeSegmentId(segment.nodeId1, segment.nodeId2);
-                
-                // Remove the segment
-                this.wireGraph.segments.delete(segmentId);
-                
-                // Update the pin node to the exact position on the wire (snap to wire)
-                let snapX = pinPos.x;
-                let snapY = pinPos.y;
-                
-                if (node1.x === node2.x) {
-                    // Vertical segment - snap X to segment
-                    snapX = node1.x;
-                } else if (node1.y === node2.y) {
-                    // Horizontal segment - snap Y to segment
-                    snapY = node1.y;
-                }
-                
-                this.wireGraph.updateNode(pinNodeId, snapX, snapY);
-                
-                // Connect the pin to both ends of the original segment
-                this.wireGraph.addSegment(segment.nodeId1, pinNodeId);
-                this.wireGraph.addSegment(pinNodeId, segment.nodeId2);
-            }
-        }
     }
     
     _updateToolButtons(activeTool) {
@@ -1770,29 +1748,6 @@ class CircuitEditorApp {
         a.download = 'circuit.cir';
         a.click();
         URL.revokeObjectURL(url);
-    }
-    
-    _copyConsoleOutput() {
-        const consoleOutput = document.getElementById('sim-log');
-        if (!consoleOutput) return;
-        const text = consoleOutput.textContent;
-        navigator.clipboard.writeText(text).then(() => {
-            // Visual feedback: briefly change button appearance
-            const btn = document.getElementById('console-copy-btn');
-            if (btn) {
-                const icon = btn.querySelector('.material-symbols-outlined');
-                const originalText = icon.textContent;
-                icon.textContent = 'check';
-                btn.style.color = '#10b981';
-                setTimeout(() => {
-                    icon.textContent = originalText;
-                    btn.style.color = '';
-                }, 1000);
-            }
-        }).catch(err => {
-            console.error('Failed to copy console output:', err);
-            alert('Failed to copy console output to clipboard.');
-        });
     }
     
     // ==================== Simulation Modal ====================
@@ -2065,7 +2020,25 @@ class CircuitEditorApp {
             });
         }
 
-        // Console copy button - handled in constructor
+        // Console copy button
+        const consoleCopyBtn = document.getElementById('console-copy-btn');
+        if (consoleCopyBtn) {
+            consoleCopyBtn.addEventListener('click', () => {
+                const consoleOutput = document.getElementById('sim-log');
+                if (consoleOutput) {
+                    navigator.clipboard.writeText(consoleOutput.textContent).then(() => {
+                        const icon = consoleCopyBtn.querySelector('.material-symbols-outlined');
+                        const originalIcon = icon.textContent;
+                        icon.textContent = 'check';
+                        setTimeout(() => {
+                            icon.textContent = originalIcon;
+                        }, 1500);
+                    }).catch(err => {
+                        console.error('Failed to copy:', err);
+                    });
+                }
+            });
+        }
 
         if (this.spiceRunBtn) {
             this.spiceRunBtn.addEventListener('click', () => this._runNgspiceSimulation());
@@ -3056,6 +3029,7 @@ class CircuitEditorApp {
             })),
             wires: this.wireGraph.toJSON(),
             probes: this.probeManager.toJSON(),
+            texts: this.textManager.toJSON(),
             simulation: this.simulationDirectives,
             counters: {
                 component: this._componentCounter,
@@ -3070,6 +3044,7 @@ class CircuitEditorApp {
         this.componentManager.pinNodeIdsByComponent.clear();
         this.wireGraph.clear();
         this.probeManager.clear();
+        this.textManager.clear();
         this.simulationDirectives = [];
         
         // Restore wires first
@@ -3099,6 +3074,11 @@ class CircuitEditorApp {
         // Restore probes
         if (data.probes) {
             this.probeManager.fromJSON(data.probes);
+        }
+        
+        // Restore texts
+        if (data.texts) {
+            this.textManager.fromJSON(data.texts);
         }
         
         // Restore counters

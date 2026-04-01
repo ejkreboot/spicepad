@@ -6,9 +6,7 @@ export default {
     rollupOptions: {
       input: {
         index: resolve(__dirname, "index.html"),
-        sim: resolve(__dirname, "sim.html"),
         symbol_editor: resolve(__dirname, "symbol_editor.html"),
-        circuit_editor: resolve(__dirname, "circuit_editor.html"),
       },
     },
   },

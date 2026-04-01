@@ -1,14 +1,362 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="stylesheet" href="./src/style.css" />
-    <title>spicepad</title>
-  </head>
-  <body>
-    <div id="app"></div>
-    <script type="module" src="./src/index/main.js"></script>
-  </body>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Circuit Editor - SpicePad</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
+  <link rel="stylesheet" href="./src/style.css">
+  <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+</head>
+<body>
+  <div class="page-header">
+    <h1>Circuit Editor</h1>
+    <a class="btn btn-nav" href="./symbol_editor.html">
+      <span class="material-symbols-outlined">design_services</span>
+      Symbol Editor
+    </a>
+  </div>
+
+  <div class="app-layout">
+    <!-- Left sidebar: components -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <h2>Components</h2>
+        <button class="btn-icon-minimal" id="import-library-btn" title="Load Library">
+          <span class="material-symbols-outlined">folder_open</span>
+        </button>
+      </div>
+      <div class="component-list" id="componentList"></div>
+    </aside>
+
+    <!-- Main workspace: canvas + results -->
+    <div class="main-workspace">
+      <div class="workspace-top">
+        <!-- Circuit editor -->
+        <div class="circuit-editor-container">
+          <div class="circuit-toolbar">
+            <button class="btn btn-secondary tool-btn" data-tool="select" title="Select Tool (S)">
+              <span class="material-symbols-outlined">arrow_selector_tool</span>
+              Select
+            </button>
+            <button class="btn btn-secondary tool-btn" data-tool="probe" title="Probe Tool (P)">
+              <span class="material-symbols-outlined">sensors</span>
+              Probe
+            </button>
+            <!-- Probe Type Selector (shown when probe tool is active) -->
+            <div class="probe-type-selector" id="probe-type-selector" style="display: none;">
+              <button class="btn btn-secondary btn-small probe-type-btn active" data-probe-type="voltage" title="Voltage Probe">
+                <span class="material-symbols-outlined">bolt</span>
+                V
+              </button>
+              <button class="btn btn-secondary btn-small probe-type-btn" data-probe-type="current" title="Current Probe">
+                <span class="material-symbols-outlined">electric_bolt</span>
+                I
+              </button>
+            </div>
+            <button class="btn btn-secondary tool-btn" data-tool="delete" title="Delete Tool (D)">
+              <span class="material-symbols-outlined">delete_forever</span>
+              Delete
+            </button>
+            <div class="separator"></div>
+            <button class="btn btn-primary" id="netlist-btn" title="View Netlist">
+              <span class="material-symbols-outlined">code</span>
+              Netlist
+            </button>
+            <button class="btn btn-secondary" id="simulation-btn" title="Simulation Settings">
+              <span class="material-symbols-outlined">trending_up</span>
+              Simulation
+            </button>
+            <div class="separator"></div>
+            <button class="btn btn-secondary" id="save-btn" title="Save Circuit">
+              <span class="material-symbols-outlined">save</span>
+              Save
+            </button>
+            <button class="btn btn-secondary" id="load-btn" title="Load Circuit">
+              <span class="material-symbols-outlined">folder_open</span>
+              Load
+            </button>
+            <div class="separator"></div>
+            <button class="btn btn-secondary" id="clear-btn" title="Clear All">
+              <span class="material-symbols-outlined">delete</span>
+              Clear
+            </button>
+            <div class="separator"></div>
+            <span class="zoom-indicator" id="zoom-indicator">100%</span>
+          </div>
+                
+          <div class="circuit-canvas-wrapper">
+            <canvas id="circuit-canvas"></canvas>
+            <div class="canvas-info">
+              <span id="coord-display">X: 0 Y: 0</span>
+              <span id="grid-display">Grid: 10</span>
+            </div>
+            <div class="simulation-badge" id="simulation-badge" title="Click to configure simulation">
+              <span class="material-symbols-outlined">science</span>
+              <span id="simulation-badge-text">No Sim</span>
+            </div>
+          </div>
+                
+          <div class="circuit-status-bar">
+            <span id="status-message">Ready</span>
+          </div>
+        </div>
+
+        <!-- Results panel (plots) -->
+        <div class="results-resize-handle" id="results-resize-handle"></div>
+        <div class="results-panel" id="results-panel">
+          <div class="results-header">
+            <h3>Results</h3>
+            <button class="btn btn-secondary btn-small" id="sim-run-btn" title="Run Simulation (⌘↵)">
+              <span class="material-symbols-outlined">play_arrow</span>
+              Run
+              <kbd class="kbd-hint">⌘↵</kbd>
+            </button>
+          </div>
+          <div class="results-status">
+            <span id="sim-status" class="runner-status run-ready">Ready</span>
+          </div>
+          <div class="results-plots" id="results-plots">
+            <div class="plot-placeholder">
+              <span class="material-symbols-outlined">show_chart</span>
+              <span>Run a simulation to see results</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Console footer -->
+      <div class="console-panel collapsed" id="console-panel">
+        <div class="console-header">
+          <button class="console-toggle" id="console-toggle" title="Toggle console">
+            <span class="material-symbols-outlined">terminal</span>
+            <span>Console</span>
+            <span class="material-symbols-outlined toggle-icon">expand_less</span>
+          </button>
+          <button class="console-action-btn" id="console-copy-btn" title="Copy console output">
+            <span class="material-symbols-outlined">content_copy</span>
+          </button>
+        </div>
+        <pre id="sim-log" class="console-output">Click Run to simulate the current circuit.</pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- Hidden file input for loading circuits -->
+  <input type="file" id="file-input" accept=".json,.spicepad" style="display: none;" />
+  <input type="file" id="library-file-input" accept=".json" style="display: none;" />
+
+  <div class="modal-overlay" id="simulation-modal" aria-hidden="true">
+    <div class="modal modal-large" role="dialog" aria-modal="true" aria-labelledby="simulation-modal-title">
+      <div class="modal-header">
+        <h3 id="simulation-modal-title">Simulation Settings</h3>
+        <button class="btn btn-secondary modal-close" type="button" aria-label="Close" id="simulation-modal-close">Close</button>
+      </div>
+      <div class="modal-body">
+        <div class="sim-tabs">
+          <button class="sim-tab active" data-tab="dc">DC Sweep</button>
+          <button class="sim-tab" data-tab="ac">AC Analysis</button>
+          <button class="sim-tab" data-tab="tran">Transient</button>
+          <button class="sim-tab" data-tab="op">Operating Point</button>
+          <button class="sim-tab" data-tab="custom">Custom</button>
+        </div>
+
+        <div class="sim-content">
+          <!-- DC Sweep -->
+          <div class="sim-panel active" data-panel="dc">
+            <div class="modal-field">
+              <label for="dc-source">Source Name</label>
+              <input type="text" id="dc-source" placeholder="V1" />
+            </div>
+            <div class="modal-field-row">
+              <div class="modal-field">
+                <label for="dc-start">Start</label>
+                <input type="text" id="dc-start" placeholder="0" />
+              </div>
+              <div class="modal-field">
+                <label for="dc-stop">Stop</label>
+                <input type="text" id="dc-stop" placeholder="5" />
+              </div>
+              <div class="modal-field">
+                <label for="dc-step">Step</label>
+                <input type="text" id="dc-step" placeholder="0.1" />
+              </div>
+            </div>
+            <button class="btn btn-primary" id="add-dc-btn">Add DC Sweep</button>
+          </div>
+
+          <!-- AC Analysis -->
+          <div class="sim-panel" data-panel="ac">
+            <div class="modal-field">
+              <label for="ac-type">Variation Type</label>
+              <select id="ac-type">
+                <option value="dec">Decade (dec)</option>
+                <option value="oct">Octave (oct)</option>
+                <option value="lin">Linear (lin)</option>
+              </select>
+            </div>
+            <div class="modal-field-row">
+              <div class="modal-field">
+                <label for="ac-points">Points per Interval</label>
+                <input type="text" id="ac-points" placeholder="10" />
+              </div>
+              <div class="modal-field">
+                <label for="ac-fstart">Start Frequency</label>
+                <input type="text" id="ac-fstart" placeholder="1" />
+              </div>
+              <div class="modal-field">
+                <label for="ac-fstop">Stop Frequency</label>
+                <input type="text" id="ac-fstop" placeholder="1Meg" />
+              </div>
+            </div>
+            <button class="btn btn-primary" id="add-ac-btn">Add AC Analysis</button>
+          </div>
+
+          <!-- Transient -->
+          <div class="sim-panel" data-panel="tran">
+            <div class="modal-field-row">
+              <div class="modal-field">
+                <label for="tran-tstep">Time Step</label>
+                <input type="text" id="tran-tstep" placeholder="1u" />
+              </div>
+              <div class="modal-field">
+                <label for="tran-tstop">Stop Time</label>
+                <input type="text" id="tran-tstop" placeholder="1m" />
+              </div>
+            </div>
+            <div class="modal-field-row">
+              <div class="modal-field">
+                <label for="tran-tstart">Start Time (optional)</label>
+                <input type="text" id="tran-tstart" placeholder="0" />
+              </div>
+              <div class="modal-field">
+                <label for="tran-tmax">Max Time Step (optional)</label>
+                <input type="text" id="tran-tmax" placeholder="" />
+              </div>
+            </div>
+            <button class="btn btn-primary" id="add-tran-btn">Add Transient Analysis</button>
+          </div>
+
+          <!-- Operating Point -->
+          <div class="sim-panel" data-panel="op">
+            <p style="color: #64748b; font-size: 13px; margin: 0 0 16px 0;">
+              Operating point analysis calculates DC node voltages and currents with all time-varying sources set to their DC values.
+            </p>
+            <button class="btn btn-primary" id="add-op-btn">Add Operating Point</button>
+          </div>
+
+          <!-- Custom -->
+          <div class="sim-panel" data-panel="custom">
+            <div class="modal-field">
+              <label for="custom-directive">Custom SPICE Directives</label>
+              <textarea id="custom-directive" rows="6" placeholder=".param Vcc=5\n.temp 27\n.include mymodel.lib" style="font-family: 'Courier New', monospace; font-size: 13px; padding: 8px; border: 1px solid #e5e5e5; border-radius: 6px; resize: vertical;"></textarea>
+            </div>
+            <button class="btn btn-primary" id="add-custom-btn">Add Custom Directives</button>
+          </div>
+        </div>
+
+        <div class="sim-directives-section">
+          <h4 style="font-size: 13px; font-weight: 600; margin: 16px 0 8px 0; color: #475569;">Active Directives</h4>
+          <div id="active-directives" style="display: flex; flex-direction: column; gap: 6px; max-height: 150px; overflow-y: auto;">
+            <div style="color: #94a3b8; font-size: 12px; padding: 12px; text-align: center;">No directives added yet</div>
+          </div>
+        </div>
+
+        <div class="sim-preview-section">
+          <h4 style="font-size: 13px; font-weight: 600; margin: 16px 0 8px 0; color: #475569;">Preview</h4>
+          <pre id="simulation-preview" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 12px; font-family: 'Courier New', monospace; font-size: 12px; color: #334155; margin: 0; white-space: pre-wrap;">No simulation directives configured</pre>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="clear-sim-btn" type="button">Clear All</button>
+        <button class="btn btn-primary" id="close-sim-btn" type="button">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="netlist-modal" aria-hidden="true">
+    <div class="modal modal-large" role="dialog" aria-modal="true" aria-labelledby="netlist-modal-title">
+      <div class="modal-header">
+        <h3 id="netlist-modal-title">Generated Netlist</h3>
+        <button class="btn btn-secondary modal-close" type="button" aria-label="Close">Close</button>
+      </div>
+      <div class="modal-body">
+        <pre id="netlist-output" class="netlist-output"></pre>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="copy-netlist-btn" type="button">Copy Netlist</button>
+        <button class="btn btn-primary" id="download-netlist-btn" type="button">Download</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="component-modal" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="component-modal-title">
+      <div class="modal-header">
+        <h3 id="component-modal-title">Edit Component</h3>
+        <button class="btn btn-secondary modal-close" type="button" aria-label="Close">Close</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-field">
+          <label for="component-label-input">Label</label>
+          <input type="text" id="component-label-input" />
+        </div>
+        <div class="modal-field" id="component-model-field">
+          <label for="component-model-select">Model</label>
+          <select id="component-model-select"></select>
+        </div>
+        <div class="modal-field" id="component-value-field">
+          <label for="component-value-input">Value</label>
+          <input type="text" id="component-value-input" />
+        </div>
+        <div class="modal-field" id="component-subcircuit-args-field" style="display: none;">
+          <label>Parameters</label>
+          <div id="component-subcircuit-args-container"></div>
+        </div>
+        <div class="modal-field" id="component-subcircuit-body-field" style="display: none;">
+          <label for="component-subcircuit-body">Subcircuit Definition</label>
+          <textarea id="component-subcircuit-body" rows="8" placeholder=".subckt NAME ...\n...\n.ends"></textarea>
+          <small style="color: #64748b; display: block; margin-top: 4px;">Instance-local override. Include the full .subckt/.ends block.</small>
+        </div>
+        <div class="modal-field">
+          <label for="component-custom-model-input">Custom Model Statement (optional)</label>
+          <textarea id="component-custom-model-input" rows="3" placeholder=".model ..."></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="component-cancel-btn" type="button">Cancel</button>
+        <button class="btn btn-primary" id="component-save-btn" type="button">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="subcircuit-modal" aria-hidden="true">
+    <div class="modal modal-large" role="dialog" aria-modal="true" aria-labelledby="subcircuit-modal-title">
+      <div class="modal-header">
+        <h3 id="subcircuit-modal-title">Create Subcircuit Component</h3>
+        <button class="btn btn-secondary modal-close" type="button" aria-label="Close">Close</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-field">
+          <label for="subcircuit-name-input">Subcircuit Name</label>
+          <input type="text" id="subcircuit-name-input" placeholder="mysubckt" />
+        </div>
+        <div class="modal-field">
+          <label for="subcircuit-pins-input">Pins (space separated)</label>
+          <input type="text" id="subcircuit-pins-input" placeholder="in out vdd gnd" />
+        </div>
+        <div class="modal-field">
+          <label for="subcircuit-body-input">Subcircuit Definition</label>
+          <textarea id="subcircuit-body-input" rows="10" placeholder=".subckt mysubckt in out vdd gnd\n...\n.ends mysubckt"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="subcircuit-cancel-btn" type="button">Cancel</button>
+        <button class="btn btn-primary" id="subcircuit-create-btn" type="button">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="./src/circuit_editor/main.js"></script>
+</body>
 </html>

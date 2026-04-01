@@ -8,10 +8,12 @@ export class ComponentManager {
 	/**
 	 * @param {import('./CanvasViewport.js').CanvasViewport} viewport
 	 * @param {import('./WireGraph.js').WireGraph} wireGraph
+	 * @param {object} options
 	 */
-	constructor(viewport, wireGraph) {
+	constructor(viewport, wireGraph, options = {}) {
 		this.viewport = viewport;
 		this.wireGraph = wireGraph;
+		this.isComponentInteractionEnabled = options.isComponentInteractionEnabled || (() => true);
         
 		this.components = [];
 		this.pinNodeIdsByComponent = new Map(); // componentId -> Map(pinId -> nodeId)
@@ -149,6 +151,7 @@ export class ComponentManager {
 	}
     
 	_onMouseDown(worldX, worldY, event) {
+		if (!this.isComponentInteractionEnabled()) return false;
 		if (event?.__selectionHandled) return false;
 		if (event.button !== 0) return false;
 		if (event.shiftKey) return false;
@@ -183,6 +186,7 @@ export class ComponentManager {
 	}
     
 	_onMouseMove(worldX, worldY, event) {
+		if (!this.isComponentInteractionEnabled()) return false;
 		if (event?.__selectionHandled) return false;
 		if (this.isLabelDragging && this.dragLabelInfo) {
 			const { component, labelType, labelIndex, offset } = this.dragLabelInfo;
@@ -226,6 +230,7 @@ export class ComponentManager {
 	}
     
 	_onMouseUp(worldX, worldY, event) {
+		if (!this.isComponentInteractionEnabled()) return false;
 		if (event?.__selectionHandled) return false;
 		if (this.isLabelDragging) {
 			this.isLabelDragging = false;

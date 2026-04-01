@@ -180,11 +180,43 @@ export class CanvasViewport {
             maxY: bottomRight.y
         };
     }
+
+    _normalizeWheelDelta(event) {
+        const lineHeight = 16;
+        const pageHeight = this.height || window.innerHeight || 1;
+
+        switch (event.deltaMode) {
+            case WheelEvent.DOM_DELTA_LINE:
+                return {
+                    deltaX: event.deltaX * lineHeight,
+                    deltaY: event.deltaY * lineHeight
+                };
+            case WheelEvent.DOM_DELTA_PAGE:
+                return {
+                    deltaX: event.deltaX * pageHeight,
+                    deltaY: event.deltaY * pageHeight
+                };
+            default:
+                return {
+                    deltaX: event.deltaX,
+                    deltaY: event.deltaY
+                };
+        }
+    }
     
     // ==================== Event Handlers ====================
     
     _onWheel(event) {
         event.preventDefault();
+
+        const { deltaX, deltaY } = this._normalizeWheelDelta(event);
+
+        if (event.shiftKey) {
+            this.panX -= deltaX / this.zoom;
+            this.panY -= deltaY / this.zoom;
+            this.render();
+            return;
+        }
         
         const rect = this.canvas.getBoundingClientRect();
         const mouseScreenX = event.clientX - rect.left;
@@ -194,7 +226,7 @@ export class CanvasViewport {
         const worldBefore = this.screenToWorld(mouseScreenX, mouseScreenY);
         
         // Calculate new zoom
-        const zoomFactor = event.deltaY > 0 ? 0.9 : 1.1;
+        const zoomFactor = deltaY > 0 ? 0.9 : 1.1;
         const newZoom = Math.max(this.minZoom, Math.min(this.maxZoom, this.zoom * zoomFactor));
         
         if (newZoom !== this.zoom) {

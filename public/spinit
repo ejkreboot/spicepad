@@ -1,7 +1,8 @@
 * Standard ngspice init file
 alias exit quit
 alias acct rusage all
-*set ngdebug
+
+set ngbehavior=ltpsa
 
 codemodel /usr/local/lib/ngspice/spice2poly.cm
 codemodel /usr/local/lib/ngspice/analog.cm
