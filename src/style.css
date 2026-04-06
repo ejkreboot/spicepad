@@ -39,6 +39,11 @@ h1 {
     flex-shrink: 0;
 }
 
+.header-logo {
+    height: 44px;
+    width: auto;
+}
+
 .app-layout {
     flex: 1;
     display: flex;
