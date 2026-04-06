@@ -22,6 +22,7 @@ import { DEFAULT_COMPONENT_LIBRARY } from '../common/defaultComponents.js';
 import { createComponentFromDefinition, Component } from './Component.js';
 import { TextManager } from './TextManager.js';
 import { TextEditor } from './TextEditor.js';
+import { SimulationRuntimeManager } from './SimulationRuntime.js';
 
 class CircuitEditorApp {
     constructor() {
@@ -75,13 +76,21 @@ class CircuitEditorApp {
         this._plotCounter = 0; // Unique plot IDs
         
         // Simulation directives
-        this.simulationDirectives = [];
         this.spiceWorker = null;
         this.spiceRunBtn = null;
+        this.spiceCancelBtn = null;
         this.spiceStatusEl = null;
-        this.spiceOutputEl = null;
+        this.spiceStatusDetailEl = null;
+        this.spiceProgressEl = null;
+        this.spiceProgressBarEl = null;
+        this.spiceProgressLabelEl = null;
         this.spicePlotEl = null;
-        this.spinitContent = null;
+        this.spiceDebugOutputEl = null;
+        this.spiceDebugContainerEl = null;
+        this.debugConsoleEnabled = false;
+        this.simulationRuntime = new SimulationRuntimeManager();
+        this._isSimulationRunning = false;
+        this._simulationCancelled = false;
         
         // Wire up UI elements
         this._setupUI();
@@ -706,8 +715,8 @@ class CircuitEditorApp {
         // Component modal
         const overlay = document.getElementById('component-modal');
         const closeBtn = document.querySelector('#component-modal .modal-close');
-        const cancelBtn = document.getElementById('component-modal-cancel');
-        const saveBtn = document.getElementById('component-modal-save');
+        const cancelBtn = document.getElementById('component-cancel-btn');
+        const saveBtn = document.getElementById('component-save-btn');
 
         if (overlay) {
             overlay.addEventListener('click', (event) => {
@@ -1682,9 +1691,9 @@ class CircuitEditorApp {
     _setupNetlistModal() {
         const netlistBtn = document.getElementById('netlist-btn');
         const netlistModal = document.getElementById('netlist-modal');
-        const closeBtn = document.getElementById('netlist-modal-close');
-        const copyBtn = document.getElementById('netlist-copy-btn');
-        const downloadBtn = document.getElementById('netlist-download-btn');
+        const closeBtn = netlistModal?.querySelector('.modal-close');
+        const copyBtn = document.getElementById('copy-netlist-btn');
+        const downloadBtn = document.getElementById('download-netlist-btn');
         
         netlistBtn?.addEventListener('click', () => this._showNetlistModal());
         closeBtn?.addEventListener('click', () => this._closeNetlistModal());
@@ -1694,11 +1703,12 @@ class CircuitEditorApp {
     
     _showNetlistModal() {
         const modal = document.getElementById('netlist-modal');
-        const content = document.getElementById('netlist-content');
+        const content = document.getElementById('netlist-output');
         if (!modal || !content) return;
         
         try {
-            const netlist = this.netlistGenerator.generate(this.simulationDirectives);
+            const rawText = (document.getElementById('simulation-preview')?.value || '').trim() || 'op';
+            const netlist = this.netlistGenerator.generate([{ type: 'custom', text: rawText }]);
             content.textContent = netlist;
             modal.classList.add('is-open');
             modal.setAttribute('aria-hidden', 'false');
@@ -1721,24 +1731,48 @@ class CircuitEditorApp {
         this._modalOpen = false;
     }
     
-    _copyNetlistToClipboard() {
-        const content = document.getElementById('netlist-content');
-        if (!content) return;
-        
-        navigator.clipboard.writeText(content.textContent)
-            .then(() => {
-                const btn = document.getElementById('netlist-copy-btn');
-                const originalText = btn.innerHTML;
-                btn.innerHTML = '<span class="material-symbols-outlined">check</span>Copied!';
-                setTimeout(() => {
-                    btn.innerHTML = originalText;
-                }, 2000);
-            })
-            .catch(err => console.error('Failed to copy:', err));
+    async _copyNetlistToClipboard() {
+        const content = document.getElementById('netlist-output');
+        const btn = document.getElementById('copy-netlist-btn');
+        if (!content || !btn) return;
+
+        const netlistText = content.textContent || '';
+        const originalText = btn.textContent;
+
+        try {
+            if (navigator.clipboard?.writeText) {
+                await navigator.clipboard.writeText(netlistText);
+            } else {
+                this._copyTextFallback(netlistText);
+            }
+
+            btn.textContent = 'Copied';
+            setTimeout(() => {
+                btn.textContent = originalText;
+            }, 2000);
+        } catch (error) {
+            console.error('Failed to copy netlist:', error);
+            btn.textContent = 'Copy Failed';
+            setTimeout(() => {
+                btn.textContent = originalText;
+            }, 2000);
+        }
+    }
+
+    _copyTextFallback(text) {
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.setAttribute('readonly', '');
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
     }
     
     _downloadNetlist() {
-        const content = document.getElementById('netlist-content');
+        const content = document.getElementById('netlist-output');
         if (!content) return;
         
         const blob = new Blob([content.textContent], { type: 'text/plain' });
@@ -1755,16 +1789,14 @@ class CircuitEditorApp {
     _setupSimulationModal() {
         const simBtn = document.getElementById('simulation-btn');
         const simBadge = document.getElementById('simulation-badge');
-        const modal = document.getElementById('simulation-modal');
-        const closeBtn = document.getElementById('simulation-modal-close');
-        const doneBtn = document.getElementById('simulation-done-btn');
-        const clearBtn = document.getElementById('simulation-clear-btn');
         
         simBtn?.addEventListener('click', () => this._showSimulationModal());
         simBadge?.addEventListener('click', () => this._showSimulationModal());
-        closeBtn?.addEventListener('click', () => this._closeSimulationModal());
-        doneBtn?.addEventListener('click', () => this._closeSimulationModal());
-        clearBtn?.addEventListener('click', () => this._clearAllDirectives());
+        document.getElementById('close-sim-btn')?.addEventListener('click', () => this._closeSimulationModal());
+        document.getElementById('clear-sim-btn')?.addEventListener('click', () => this._clearAllDirectives());
+
+        // Live badge update as user edits the commands textarea
+        document.getElementById('simulation-preview')?.addEventListener('input', () => this._updateSimulationBadge());
         
         // Tab switching
         const tabs = document.querySelectorAll('.sim-tab');
@@ -1786,9 +1818,6 @@ class CircuitEditorApp {
     _showSimulationModal() {
         const modal = document.getElementById('simulation-modal');
         if (!modal) return;
-        
-        this._updateDirectivesList();
-        this._updateSimulationPreview();
         
         modal.classList.add('is-open');
         modal.setAttribute('aria-hidden', 'false');
@@ -1828,17 +1857,8 @@ class CircuitEditorApp {
             return;
         }
         
-        const directive = {
-            type: 'dc',
-            text: `.dc ${source} ${start} ${stop} ${step}`,
-            params: { source, start, stop, step }
-        };
+        this._appendToSimTextarea(`dc ${source} ${start} ${stop} ${step}`);
         
-        this.simulationDirectives.push(directive);
-        this._updateDirectivesList();
-        this._updateSimulationPreview();
-        
-        // Clear inputs
         document.getElementById('dc-source').value = '';
         document.getElementById('dc-start').value = '';
         document.getElementById('dc-stop').value = '';
@@ -1856,17 +1876,8 @@ class CircuitEditorApp {
             return;
         }
         
-        const directive = {
-            type: 'ac',
-            text: `.ac ${type} ${points} ${fstart} ${fstop}`,
-            params: { type, points, fstart, fstop }
-        };
+        this._appendToSimTextarea(`ac ${type} ${points} ${fstart} ${fstop}`);
         
-        this.simulationDirectives.push(directive);
-        this._updateDirectivesList();
-        this._updateSimulationPreview();
-        
-        // Clear inputs
         document.getElementById('ac-points').value = '';
         document.getElementById('ac-fstart').value = '';
         document.getElementById('ac-fstop').value = '';
@@ -1883,21 +1894,12 @@ class CircuitEditorApp {
             return;
         }
         
-        let text = `.tran ${tstep} ${tstop}`;
-        if (tstart) text += ` ${tstart}`;
-        if (tmax) text += ` ${tmax}`;
+        let line = `tran ${tstep} ${tstop}`;
+        if (tstart) line += ` ${tstart}`;
+        if (tmax) line += ` ${tmax}`;
         
-        const directive = {
-            type: 'tran',
-            text,
-            params: { tstep, tstop, tstart, tmax }
-        };
+        this._appendToSimTextarea(line);
         
-        this.simulationDirectives.push(directive);
-        this._updateDirectivesList();
-        this._updateSimulationPreview();
-        
-        // Clear inputs
         document.getElementById('tran-tstep').value = '';
         document.getElementById('tran-tstop').value = '';
         document.getElementById('tran-tstart').value = '';
@@ -1905,15 +1907,7 @@ class CircuitEditorApp {
     }
     
     _addOpDirective() {
-        const directive = {
-            type: 'op',
-            text: '.op',
-            params: {}
-        };
-        
-        this.simulationDirectives.push(directive);
-        this._updateDirectivesList();
-        this._updateSimulationPreview();
+        this._appendToSimTextarea('op');
     }
     
     _addCustomDirective() {
@@ -1924,68 +1918,36 @@ class CircuitEditorApp {
             return;
         }
         
-        const directive = {
-            type: 'custom',
-            text,
-            params: {}
-        };
-        
-        this.simulationDirectives.push(directive);
-        this._updateDirectivesList();
-        this._updateSimulationPreview();
-        
-        // Clear input
+        this._appendToSimTextarea(text);
         document.getElementById('custom-directive').value = '';
+    }
+
+    _appendToSimTextarea(text) {
+        const ta = document.getElementById('simulation-preview');
+        if (!ta) return;
+        const current = ta.value;
+        ta.value = current ? `${current.trimEnd()}
+${text}` : text;
+        this._updateSimulationBadge();
     }
     
     _clearAllDirectives() {
-        if (this.simulationDirectives.length === 0) return;
+        const ta = document.getElementById('simulation-preview');
+        if (!ta || !ta.value.trim()) return;
         
-        if (confirm('Clear all simulation directives?')) {
-            this.simulationDirectives = [];
-            this._updateDirectivesList();
-            this._updateSimulationPreview();
+        if (confirm('Clear all simulation commands?')) {
+            ta.value = '';
             this._updateSimulationBadge();
         }
     }
     
-    _removeDirective(index) {
-        this.simulationDirectives.splice(index, 1);
-        this._updateDirectivesList();
-        this._updateSimulationPreview();
-        this._updateSimulationBadge();
-    }
-    
     _updateDirectivesList() {
-        const container = document.getElementById('active-directives');
-        if (!container) return;
-        
-        if (this.simulationDirectives.length === 0) {
-            container.innerHTML = '<div style=\"color: #94a3b8; font-size: 12px; padding: 12px; text-align: center;\">No directives added yet</div>';
-            return;
-        }
-        
-        container.innerHTML = this.simulationDirectives.map((dir, idx) => `
-            <div class="directive-item">
-                <span>${dir.text}</span>
-                <div class="directive-item-actions">
-                    <button onclick="window.circuitEditor._removeDirective(${idx})">Remove</button>
-                </div>
-            </div>
-        `).join('');
+        // Active-directives list removed; textarea is the editable source of truth.
     }
     
     _updateSimulationPreview() {
-        const preview = document.getElementById('sim-preview');
-        if (!preview) return;
-        
-        if (this.simulationDirectives.length === 0) {
-            preview.textContent = '* No directives';
-            return;
-        }
-        
-        const lines = this.simulationDirectives.map(dir => dir.text);
-        preview.textContent = lines.join('\n');
+        // The simulation-preview textarea is the live editable source of truth;
+        // nothing to push into it from here.
     }
     
     _updateSimulationBadge() {
@@ -1993,13 +1955,21 @@ class CircuitEditorApp {
         const badgeText = document.getElementById('simulation-badge-text');
         if (!badge || !badgeText) return;
         
-        if (this.simulationDirectives.length === 0) {
+        const text = (document.getElementById('simulation-preview')?.value || '').trim();
+        if (!text) {
             badge.classList.remove('active');
             badgeText.textContent = 'No Sim';
         } else {
+            const types = new Set();
+            text.split('\n').forEach(line => {
+                const l = line.trim().toLowerCase();
+                if (l.startsWith('ac ') || l === 'ac' || l.startsWith('.ac')) types.add('AC');
+                else if (l.startsWith('tran ') || l === 'tran' || l.startsWith('.tran')) types.add('TRAN');
+                else if (l.startsWith('dc ') || l === 'dc' || l.startsWith('.dc')) types.add('DC');
+                else if (l === 'op' || l.startsWith('op ') || l === '.op' || l.startsWith('.op ')) types.add('OP');
+            });
             badge.classList.add('active');
-            const types = [...new Set(this.simulationDirectives.map(d => d.type.toUpperCase()))];
-            badgeText.textContent = types.join(', ');
+            badgeText.textContent = types.size > 0 ? [...types].join(', ') : 'Custom';
         }
     }
 
@@ -2007,35 +1977,22 @@ class CircuitEditorApp {
 
     _setupSimulationRunner() {
         this.spiceRunBtn = document.getElementById('sim-run-btn');
+        this.spiceCancelBtn = document.getElementById('sim-cancel-btn');
         this.spiceStatusEl = document.getElementById('sim-status');
-        this.spiceOutputEl = document.getElementById('sim-log');
+        this.spiceStatusDetailEl = document.getElementById('sim-status-detail');
+        this.spiceProgressEl = document.getElementById('sim-progress');
+        this.spiceProgressBarEl = document.getElementById('sim-progress-bar');
+        this.spiceProgressLabelEl = document.getElementById('sim-progress-label');
         this.spicePlotsEl = document.getElementById('results-plots');
-        
-        // Console toggle
-        const consoleToggle = document.getElementById('console-toggle');
-        const consolePanel = document.getElementById('console-panel');
-        if (consoleToggle && consolePanel) {
-            consoleToggle.addEventListener('click', () => {
-                consolePanel.classList.toggle('collapsed');
-            });
-        }
+        this.spiceDebugOutputEl = document.getElementById('sim-debug-output');
+        this.spiceDebugContainerEl = document.getElementById('results-debug');
 
-        // Console copy button
-        const consoleCopyBtn = document.getElementById('console-copy-btn');
-        if (consoleCopyBtn) {
-            consoleCopyBtn.addEventListener('click', () => {
-                const consoleOutput = document.getElementById('sim-log');
-                if (consoleOutput) {
-                    navigator.clipboard.writeText(consoleOutput.textContent).then(() => {
-                        const icon = consoleCopyBtn.querySelector('.material-symbols-outlined');
-                        const originalIcon = icon.textContent;
-                        icon.textContent = 'check';
-                        setTimeout(() => {
-                            icon.textContent = originalIcon;
-                        }, 1500);
-                    }).catch(err => {
-                        console.error('Failed to copy:', err);
-                    });
+        const debugToggleEl = document.getElementById('debug-console-toggle');
+        if (debugToggleEl) {
+            debugToggleEl.addEventListener('change', () => {
+                this.debugConsoleEnabled = debugToggleEl.checked;
+                if (this.spiceDebugContainerEl) {
+                    this.spiceDebugContainerEl.classList.toggle('is-visible', this.debugConsoleEnabled);
                 }
             });
         }
@@ -2043,198 +2000,216 @@ class CircuitEditorApp {
         if (this.spiceRunBtn) {
             this.spiceRunBtn.addEventListener('click', () => this._runNgspiceSimulation());
         }
+        if (this.spiceCancelBtn) {
+            this.spiceCancelBtn.addEventListener('click', () => this._cancelNgspiceSimulation());
+            this.spiceCancelBtn.disabled = true;
+        }
 
         // Show initial status
         this._setRunStatus('ready', 'Ready');
+        this._setRunProgress('none');
+        this._clearDebugConsole();
 
-        this._loadSpinitFile();
     }
 
-    async _loadSpinitFile() {
-        try {
-            const res = await fetch('/spinit');
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            this.spinitContent = await res.text();
-            console.log('Loaded spinit');
-        } catch (error) {
-            console.warn('Could not load spinit:', error.message || error);
+    _clearDebugConsole() {
+        if (!this.spiceDebugOutputEl) return;
+        this.spiceDebugOutputEl.textContent = 'Waiting for simulation output...';
+    }
+
+    _appendDebugConsole(text, prefix = '') {
+        if (!this.debugConsoleEnabled || !this.spiceDebugOutputEl || !text) return;
+
+        const entry = `${prefix}${text}`.replace(/\n?$/, '\n');
+        if (this.spiceDebugOutputEl.textContent === 'Waiting for simulation output...') {
+            this.spiceDebugOutputEl.textContent = '';
         }
+        this.spiceDebugOutputEl.textContent += entry;
+        this.spiceDebugOutputEl.scrollTop = this.spiceDebugOutputEl.scrollHeight;
     }
 
-    _runNgspiceSimulation() {
-        if (!this.spiceRunBtn || !this.spiceStatusEl || !this.spiceOutputEl) return;
+    async _runNgspiceSimulation() {
+        if (!this.spiceRunBtn || !this.spiceStatusEl) return;
+        if (this._isSimulationRunning) return;
 
         const probeCount = this.probeManager?.probes?.length ?? 0;
         if (probeCount === 0) {
             const message = 'Place at least one probe before running the simulation.';
             this._setRunStatus('error', message);
-            this._appendRunOutput(`[note] ${message}`);
             alert(message);
             return;
         }
 
-        const directives = (this.simulationDirectives && this.simulationDirectives.length > 0)
-            ? this.simulationDirectives
-            : [{ type: 'op', text: '.op', params: {} }];
+        const rawText = (document.getElementById('simulation-preview')?.value || '').trim();
+        const simText = rawText || 'op';
 
-        // Build one netlist per directive so we can render a plot for each
+        // Build a single job for the whole textarea content
         let jobs;
         try {
-            jobs = directives.map((dir, idx) => {
-                const { netlist, probeInfo, analysisType } = this.netlistGenerator.generateWithMetadata([dir], {
-                    includeControlBlock: true
-                });
-                return {
-                    idx,
-                    label: dir.text || dir.type || `Directive ${idx + 1}`,
-                    netlist,
-                    probeInfo,
-                    analysisType
-                };
-            });
+            const { netlist, probeInfo, analysisType, runtimeSignals } =
+                this.netlistGenerator.generateWithMetadata([{ type: 'custom', text: simText }]);
+            jobs = [{
+                idx: 0,
+                label: rawText || 'Operating Point',
+                netlist,
+                probeInfo,
+                analysisType,
+                runtimeSignals
+            }];
         } catch (error) {
             this._setRunStatus('error', 'Failed to generate netlist');
-            this._appendRunOutput(`[error] ${error.message}`);
             return;
         }
 
-        this.spiceOutputEl.textContent = '';
         this._clearPlot();
-        this._appendRunOutput('* --- Starting simulations ---');
+    this._clearDebugConsole();
+    this._appendDebugConsole(`Queued ${jobs.length} analysis${jobs.length === 1 ? '' : 'es'}`);
 
-        this._setRunStatus('running', 'Running simulation...');
+        this._simulationCancelled = false;
+        this._isSimulationRunning = true;
+        this._setRunStatus('running', 'Initializing simulation...', `Queued ${jobs.length} analysis${jobs.length === 1 ? '' : 'es'}`);
+        this._setRunProgress('indeterminate', null, 'Preparing ngspice runtime');
         this.spiceRunBtn.disabled = true;
-
-        if (this.spiceWorker) {
-            this.spiceWorker.terminate();
-            this.spiceWorker = null;
+        if (this.spiceCancelBtn) {
+            this.spiceCancelBtn.disabled = false;
         }
 
         this._pendingSimJobs = jobs;
         this._simResults = [];
 
-        let currentJobIndex = -1;
+        try {
+            for (let index = 0; index < jobs.length; index += 1) {
+                if (this._simulationCancelled) break;
 
-        const startWorkerForJob = (index) => {
-            // Always start a fresh worker to fully reinitialize ngspice between jobs
-            if (this.spiceWorker) {
-                try { this.spiceWorker.terminate(); } catch (_) {}
-                this.spiceWorker = null;
+                const job = jobs[index];
+                const result = await this.simulationRuntime.runJob(job, {
+                    onStatus: (status) => this._handleSimulationStatus(status, job, index, jobs.length),
+                    onProgress: (progress) => this._handleSimulationProgress(progress, job, index, jobs.length),
+                    onStdout: (text) => this._appendDebugConsole(text, '[stdout] '),
+                    onStderr: (text) => this._appendDebugConsole(text, '[stderr] '),
+                });
+
+                this._simResults.push({ ...job, ...result });
             }
 
-            const job = jobs[index];
-            const worker = new Worker('/ngspice-worker.js');
-            this.spiceWorker = worker;
-
-            const sendRun = () => {
-                this._appendRunOutput(`* [${index + 1}/${jobs.length}] ${job.label}`);
-                this._appendRunOutput('* --- Netlist sent to ngspice ---');
-                this._appendRunOutput(job.netlist);
-                this._appendRunOutput('* --------------------------------');
-                worker.postMessage({
-                    type: 'run',
-                    netlist: job.netlist,
-                    spinit: this.spinitContent
-                });
-            };
-
-            worker.onmessage = (e) => {
-                const { type, text, message, outputData, stdout, stderr, stack } = e.data;
-                switch (type) {
-                    case 'ready': {
-                        currentJobIndex = index;
-                        sendRun();
-                        break;
-                    }
-                    case 'status': {
-                        this._appendRunOutput(`[status] ${text}`);
-                        break;
-                    }
-                    case 'stdout': {
-                        this._appendRunOutput(text);
-                        break;
-                    }
-                    case 'stderr': {
-                        this._appendRunOutput(`[stderr] ${text}`);
-                        break;
-                    }
-                    case 'complete': {
-                        const jobDone = jobs[currentJobIndex];
-                        this._simResults.push({
-                            ...jobDone,
-                            outputData,
-                            stdout,
-                            stderr
-                        });
-
-                        try { worker.terminate(); } catch (_) {}
-                        this.spiceWorker = null;
-
-                        const nextIndex = currentJobIndex + 1;
-                        if (nextIndex < jobs.length) {
-                            startWorkerForJob(nextIndex);
-                        } else {
-                            finishAll();
-                        }
-                        break;
-                    }
-                    case 'error': {
-                        this._setRunStatus('error', 'Simulation failed');
-                        this.spiceRunBtn.disabled = false;
-                        this._appendRunOutput(`[error] ${message}`);
-                        if (stack) this._appendRunOutput(stack);
-                        this._showErrorPlaceholder(message);
-                        try { worker.terminate(); } catch (_) {}
-                        this.spiceWorker = null;
-                        break;
-                    }
-                    default:
-                        break;
-                }
-            };
-
-            worker.onerror = (err) => {
-                this._setRunStatus('error', 'Worker error');
-                this.spiceRunBtn.disabled = false;
-                this._appendRunOutput(`[worker] ${err.message}`);
-                this._showErrorPlaceholder(err.message);
-                try { worker.terminate(); } catch (_) {}
-                this.spiceWorker = null;
-            };
-        };
-
-        const finishAll = () => {
-            this._setRunStatus('ready', 'Simulation complete');
+            if (this._simulationCancelled) {
+                this._setRunStatus('ready', 'Simulation cancelled', 'Run aborted before completion');
+                this._setRunProgress('none');
+            } else {
+                this._finishSimulationRun();
+            }
+        } catch (error) {
+            if (error?.cancelled || this._simulationCancelled) {
+                this._setRunStatus('ready', 'Simulation cancelled', 'Run aborted before completion');
+                this._setRunProgress('none');
+            } else {
+                this._setRunStatus('error', 'Simulation failed', error.message);
+                this._showErrorPlaceholder(error.message);
+            }
+        } finally {
+            this._isSimulationRunning = false;
             this.spiceRunBtn.disabled = false;
-
-            // Render plots for each completed job
-            this._simResults.forEach((result) => {
-                if (result.outputData) {
-                    this._appendRunOutput(`--- output (${result.label}) ---`);
-                    this._appendRunOutput(result.outputData);
-                    const plotId = `${result.analysisType || 'plot'}-${result.idx + 1}-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`;
-                    this._plotResults(result.outputData, result.probeInfo, result.analysisType, plotId);
-                } else if (result.stdout) {
-                    this._appendRunOutput(`[note] No output.txt for ${result.label}`);
-                    this._appendRunOutput(result.stdout);
-                    const plotId = `${result.analysisType || 'plot'}-${result.idx + 1}-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`;
-                    this._tryParsePrintOutput(result.stdout, result.probeInfo, result.analysisType, plotId);
-                } else if (result.stderr) {
-                    this._appendRunOutput(result.stderr);
-                }
-            });
-
-            worker.terminate();
-            this.spiceWorker = null;
-        };
-
-        // Kick off the first job
-        startWorkerForJob(0);
+            if (this.spiceCancelBtn) {
+                this.spiceCancelBtn.disabled = true;
+            }
+        }
     }
 
-    _setRunStatus(state, text) {
+    async _cancelNgspiceSimulation() {
+        if (!this._isSimulationRunning) return;
+        this._simulationCancelled = true;
+        this._setRunStatus('running', 'Cancelling simulation...', 'Stopping active ngspice worker');
+        this._setRunProgress('indeterminate', null, 'Cancelling active analysis');
+        await this.simulationRuntime.cancel();
+    }
+
+    _handleSimulationStatus(status, job, index, totalJobs) {
+        const lifecycle = status.lifecycle || 'running';
+        const summary = lifecycle === 'loading-assets'
+            ? 'Loading ngspice assets...'
+            : lifecycle === 'parsing-netlist'
+                ? 'Submitting circuit...'
+                : 'Running simulation...';
+
+        this._setRunStatus('running', summary, `[${index + 1}/${totalJobs}] ${job.label}`);
+        this._appendDebugConsole(`${status.message || summary}`, `[status ${index + 1}/${totalJobs}] `);
+
+        if (lifecycle !== 'running') {
+            this._setRunProgress('indeterminate', null, status.message);
+        }
+    }
+
+    _handleSimulationProgress(progress, job, index, totalJobs) {
+        if (progress.mode === 'determinate' && Number.isFinite(progress.progress)) {
+            const percent = Math.max(0, Math.min(progress.progress, 1));
+            const label = `${Math.round(percent * 100)}% • ${this._formatProgressTimes(progress.currentTime, progress.finalTime)}`;
+            //this._setRunStatus('running', 'Running transient analysis...', `[${index + 1}/${totalJobs}] ${job.label}`);
+            this._setRunProgress('determinate', percent, label);
+            return;
+        }
+
+        this._setRunProgress('indeterminate', null, `[${index + 1}/${totalJobs}] ${job.label}`);
+    }
+
+    _finishSimulationRun() {
+        let failedCount = 0;
+        console.log('Simulation results:', this._simResults);
+        this._simResults.forEach((result) => {
+            const plotId = `${result.analysisType || 'plot'}-${result.idx + 1}-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`;
+            this._appendDebugConsole(`\n=== ${result.label} (${result.analysisType}) ===`);
+            if (result.stdout) {
+                this._appendDebugConsole(result.stdout, '[stdout dump]\n');
+            }
+            if (result.stderr) {
+                this._appendDebugConsole(result.stderr, '[stderr dump]\n');
+            }
+            if (result.success === false) {
+                failedCount += 1;
+                const message = result.failureMessage || 'Analysis failed before any plot data was produced.';
+                this._showAnalysisFailure(result.analysisType, result.label, message, plotId);
+            } else if (result.analyses && result.analyses.length > 0) {
+                // Use the runtimeSignals from the job to filter vectors
+                this._plotAnalyses(result.analyses, result.probeInfo, result.runtimeSignals, plotId);
+            } else {
+                failedCount += 1;
+                const message = result.failureMessage || 'Analysis completed without producing usable results.';
+                this._showAnalysisFailure(result.analysisType, result.label, message, plotId);
+            }
+        });
+
+        if (failedCount === 0) {
+            this._setRunStatus('ready', 'Simulation complete', `Completed ${this._simResults.length} analys${this._simResults.length === 1 ? 'is' : 'es'}`);
+        } else if (failedCount === this._simResults.length) {
+            this._setRunStatus('error', 'All analyses failed', 'See console for ngspice diagnostics');
+        } else {
+            this._setRunStatus('error', `${failedCount} of ${this._simResults.length} analyses failed`, 'Completed with partial failures');
+        }
+
+        this._setRunProgress('none');
+    }
+
+    _inferAnalysisType(text) {
+        const normalized = String(text || '').trim().toLowerCase();
+        if (normalized.startsWith('.tran') || normalized.startsWith('tran')) return 'tran';
+        if (normalized.startsWith('.ac') || normalized.startsWith('ac')) return 'ac';
+        if (normalized.startsWith('.dc') || normalized.startsWith('dc')) return 'dc';
+        if (normalized.startsWith('.op') || normalized.startsWith('op')) return 'op';
+        return 'op';
+    }
+
+    _formatProgressTimes(currentTime, finalTime) {
+        if (!Number.isFinite(currentTime) || !Number.isFinite(finalTime) || finalTime <= 0) {
+            return 'Running';
+        }
+        return `${currentTime.toExponential(3)} / ${finalTime.toExponential(3)} s`;
+    }
+
+    _setRunStatus(state, text, detail = '') {
         if (!this.spiceStatusEl) return;
         this.spiceStatusEl.textContent = text;
+        if (this.spiceStatusDetailEl) {
+            this.spiceStatusDetailEl.textContent = detail || '';
+        }
         this.spiceStatusEl.classList.remove('run-ready', 'run-running', 'run-error');
         switch (state) {
             case 'running':
@@ -2248,12 +2223,28 @@ class CircuitEditorApp {
         }
     }
 
-    _appendRunOutput(line) {
-        if (!this.spiceOutputEl) return;
-        const current = this.spiceOutputEl.textContent || '';
-        const next = current ? `${current}\n${line}` : line;
-        this.spiceOutputEl.textContent = next;
-        this.spiceOutputEl.scrollTop = this.spiceOutputEl.scrollHeight;
+    _setRunProgress(mode, value = null, label = '') {
+        if (!this.spiceProgressEl || !this.spiceProgressBarEl || !this.spiceProgressLabelEl) return;
+
+        this.spiceProgressEl.classList.remove('is-hidden', 'is-indeterminate');
+
+        if (mode === 'none') {
+            this.spiceProgressEl.classList.add('is-hidden');
+            this.spiceProgressBarEl.style.width = '0%';
+            this.spiceProgressLabelEl.textContent = '';
+            return;
+        }
+
+        if (mode === 'indeterminate') {
+            this.spiceProgressEl.classList.add('is-indeterminate');
+            this.spiceProgressBarEl.style.width = '35%';
+            this.spiceProgressLabelEl.textContent = label || 'Running analysis';
+            return;
+        }
+
+        const percent = Math.max(0, Math.min(Number(value) || 0, 1));
+        this.spiceProgressBarEl.style.width = `${percent * 100}%`;
+        this.spiceProgressLabelEl.textContent = label || `${Math.round(percent * 100)}%`;
     }
 
     _clearPlot() {
@@ -2295,12 +2286,62 @@ class CircuitEditorApp {
         this.spicePlotsEl.innerHTML = `
             <div class="plot-placeholder error">
                 <span class="material-symbols-outlined">error_outline</span>
-                <span>Simulation failed<br/><small>Check the console for details</small></span>
+                <span>Simulation failed<br/><small>Review the status and analysis cards for details</small></span>
             </div>
         `;
-        // Expand console to show error details
-        const consolePanel = document.getElementById('console-panel');
-        if (consolePanel) consolePanel.classList.remove('collapsed');
+    }
+
+    _getAnalysisTitle(analysisType) {
+        return {
+            'ac': 'AC Analysis (Frequency Response)',
+            'tran': 'Transient Analysis',
+            'dc': 'DC Sweep',
+            'op': 'Operating Point'
+        }[analysisType] || 'Simulation Results';
+    }
+
+    _showAnalysisFailure(analysisType, label, message, id) {
+        if (!this.spicePlotsEl) return;
+
+        const placeholder = this.spicePlotsEl.querySelector('.plot-placeholder');
+        if (placeholder) placeholder.remove();
+
+        const container = document.createElement('div');
+        container.className = 'plot-container plot-container-error';
+        container.id = `plot-${id}`;
+
+        const header = document.createElement('div');
+        header.className = 'plot-header';
+
+        const title = document.createElement('div');
+        title.className = 'plot-title';
+        title.textContent = this._getAnalysisTitle(analysisType);
+        header.appendChild(title);
+
+        const body = document.createElement('div');
+        body.className = 'plot-message error';
+
+        const icon = document.createElement('span');
+        icon.className = 'material-symbols-outlined';
+        icon.textContent = 'error_outline';
+
+        const copy = document.createElement('div');
+        copy.className = 'plot-message-copy';
+
+        const heading = document.createElement('strong');
+        heading.textContent = label;
+
+        const detail = document.createElement('span');
+        detail.textContent = message;
+
+        copy.appendChild(heading);
+        copy.appendChild(detail);
+        body.appendChild(icon);
+        body.appendChild(copy);
+
+        container.appendChild(header);
+        container.appendChild(body);
+        this.spicePlotsEl.appendChild(container);
     }
     
     /**
@@ -2320,12 +2361,7 @@ class CircuitEditorApp {
         container.className = 'plot-container';
         container.id = `plot-${id}`;
         
-        const titleText = {
-            'ac': 'AC Analysis (Frequency Response)',
-            'tran': 'Transient Analysis',
-            'dc': 'DC Sweep',
-            'op': 'Operating Point'
-        }[analysisType] || 'Simulation Results';
+        const titleText = this._getAnalysisTitle(analysisType);
         
         // Add scale toggle for AC analysis
         const scaleToggle = analysisType === 'ac' ? `
@@ -2371,6 +2407,7 @@ class CircuitEditorApp {
             </div>
             ${xySelectors}
             <div class="plot-area" id="plot-area-${id}"></div>
+            <div class="plot-yrange-controls"></div>
         `;
         
         // Setup export button
@@ -2431,156 +2468,165 @@ class CircuitEditorApp {
         return container.querySelector('.plot-area');
     }
 
-    _tryParsePrintOutput(stdout, probeInfo = [], analysisType = 'tran', plotId = null) {
-        if (!stdout) return;
-        const lines = stdout.split('\n');
-        const dataLines = lines.filter(line => {
-            const trimmed = line.trim();
-            return /^\d/.test(trimmed) || /^-?\d*\.\d+/.test(trimmed);
-        });
-        if (dataLines.length > 0) {
-            this._plotResults(dataLines.join('\n'), probeInfo, analysisType, plotId);
-        }
-    }
-
     /**
-     * Plot simulation results with support for different analysis types
-     * @param {string} data - Raw output data
-     * @param {Array<{label: string, node: string}>} probeInfo - Probe metadata
-     * @param {string} analysisType - Type of analysis ('ac', 'tran', 'dc', 'op')
+     * Plot all analyses from a simulation result, filtering vectors to match probed signals.
+     * @param {Array} analyses - NormalizedResult[] from the new ngspice client
+     * @param {Array} probeInfo - Probe metadata from NetlistGenerator
+     * @param {string[]} runtimeSignals - Signal names we care about (e.g. "v(3)", "i(V_IPROBE_I1)")
+     * @param {string} plotId - Base plot ID
      */
-    _plotResults(data, probeInfo = [], analysisType = 'tran', plotId = null) {
+    _plotAnalyses(analyses, probeInfo = [], runtimeSignals = [], plotId = null) {
         if (!this.spicePlotsEl) return;
-        if (!data || !data.trim()) return;
-        if (!window.Plotly) {
-            this._appendRunOutput('[note] Plotly not loaded; cannot plot results');
-            return;
-        }
 
-        const lines = data.trim().split('\n').filter(l => {
-            if (!l) return false;
-            if (l.startsWith('#') || l.startsWith('N')) return false;
-            if (l.includes('Index') || l.toLowerCase().includes('time')) return false;
-            return true;
-        });
+        // Build a set of wanted signal names (lowercased) for filtering
+        const wantedSet = new Set(runtimeSignals.map(s => s.toLowerCase()));
 
-        if (lines.length === 0) {
-            this._appendRunOutput('[note] No plottable data found');
-            return;
-        }
+        analyses.forEach((analysis, i) => {
+            const id = plotId ? `${plotId}-${i}` : `analysis-${++this._plotCounter}`;
+            const aType = analysis.type || 'unknown';
 
-        // Create a plot container for this analysis
-        const plotArea = this._createPlotContainer(analysisType, plotId || ++this._plotCounter);
-        console.log('[_plotResults] created plotArea:', plotArea);
-        if (!plotArea) return;
+            if (aType === 'op' || aType === 'tf' || aType === 'sens') {
+                this._plotOpAnalysis(analysis, probeInfo, wantedSet, id);
+                return;
+            }
 
-        // Parse based on analysis type
-        if (analysisType === 'ac') {
-            this._plotAcResults(lines, probeInfo, plotArea);
-        } else {
-            this._plotTimeDomainResults(lines, probeInfo, analysisType, plotArea);
-        }
-    }
+            if (!analysis.sweep) return;
+            if (!window.Plotly) return;
 
-    /**
-     * Plot AC analysis results (frequency domain with complex numbers)
-     * wrdata format for AC: freq v(1)_real v(1)_imag freq v(2)_real v(2)_imag ...
-     * @param {Array<string>} lines - Data lines
-     * @param {Array} probeInfo - Probe metadata
-     * @param {HTMLElement} plotArea - The element to render the plot into
-     */
-    _plotAcResults(lines, probeInfo, plotArea) {
-        const colsPerSignal = 3; // freq, real, imag
-        
-        // Infer number of signals from data columns (more reliable than probeInfo.length)
-        const firstLine = lines.find(l => l.trim().length > 0);
-        if (!firstLine) {
-            this._appendRunOutput('[note] No AC data to plot');
-            return;
-        }
-        const firstParts = firstLine.trim().split(/\s+/);
-        const numSignals = Math.floor(firstParts.length / colsPerSignal);
-        
-        if (numSignals === 0) {
-            this._appendRunOutput('[note] Invalid AC data format');
-            return;
-        }
-        
-        // Default colors for signals without probe colors
-        const defaultColors = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'];
-        
-        const signals = [];
-        for (let i = 0; i < numSignals; i++) {
-            signals.push({
-                label: probeInfo[i]?.label || `Signal ${i + 1}`,
-                color: probeInfo[i]?.color || defaultColors[i % defaultColors.length],
-                freq: [],
-                magnitude: [],
-                phase: []
-            });
-        }
+            const plotArea = this._createPlotContainer(aType, id);
+            if (!plotArea) return;
 
-        lines.forEach((line) => {
-            const parts = line.trim().split(/\s+/).map(Number);
-            if (parts.length < colsPerSignal) return;
-            
-            // Parse each signal's data (freq, real, imag triplets)
-            for (let i = 0; i < numSignals; i++) {
-                const baseIdx = i * colsPerSignal;
-                if (baseIdx + 2 >= parts.length) break;
-                
-                const freq = parts[baseIdx];
-                const real = parts[baseIdx + 1];
-                const imag = parts[baseIdx + 2];
-                
-                if (!Number.isFinite(freq) || !Number.isFinite(real) || !Number.isFinite(imag)) continue;
-                
-                // Calculate magnitude and phase
-                const magnitude = Math.sqrt(real * real + imag * imag);
-                const phase = Math.atan2(imag, real) * (180 / Math.PI);
-                
-                signals[i].freq.push(freq);
-                signals[i].magnitude.push(magnitude);
-                signals[i].phase.push(phase);
+            if (aType === 'ac') {
+                this._plotAcAnalysis(analysis, probeInfo, wantedSet, plotArea);
+            } else {
+                this._plotSweepAnalysis(analysis, probeInfo, wantedSet, aType, plotArea);
             }
         });
+    }
 
-        // Filter out signals with no data
-        const validSignals = signals.filter(s => s.freq.length > 0);
-        
-        if (validSignals.length === 0) {
-            this._appendRunOutput('[note] Unable to parse AC data for plotting');
+    /**
+     * Filter vectors from an analysis to only those matching probed signals.
+     * Returns an array of { vector, probeMatch } objects.
+     */
+    _filterVectors(vectors, probeInfo, wantedSet) {
+        const defaultColors = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'];
+
+        return vectors
+            .filter(v => wantedSet.size === 0 || wantedSet.has(v.name.toLowerCase()))
+            .map((v, i) => {
+                // Try to match vector to a probe for label/color
+                const probe = probeInfo.find(p => {
+                    if (p.type === 'current' && p.sourceName) {
+                        return v.name.toLowerCase() === `i(${p.sourceName.toLowerCase()})`;
+                    }
+                    return v.name.toLowerCase() === `v(${(p.node || '').toLowerCase()})`;
+                });
+                return {
+                    vector: v,
+                    label: probe?.label || v.name,
+                    color: probe?.color || defaultColors[i % defaultColors.length],
+                    type: probe?.type || (v.name.toLowerCase().startsWith('i(') ? 'current' : 'voltage')
+                };
+            });
+    }
+
+    /**
+     * Render an operating point / scalar analysis as a table.
+     */
+    _plotOpAnalysis(analysis, probeInfo, wantedSet, plotId) {
+        const plotArea = this._createPlotContainer(analysis.type || 'op', plotId);
+        if (!plotArea) return;
+
+        const fmt = (v) => {
+            const abs = Math.abs(v);
+            if (abs === 0) return '0';
+            if (abs >= 1e3) return (v / 1e3).toPrecision(5) + ' k';
+            if (abs >= 1) return v.toPrecision(5);
+            if (abs >= 1e-3) return (v * 1e3).toPrecision(5) + ' m';
+            if (abs >= 1e-6) return (v * 1e6).toPrecision(5) + ' µ';
+            return v.toExponential(4);
+        };
+
+        const scalars = analysis.scalars || {};
+        const entries = Object.entries(scalars)
+            .filter(([name]) => wantedSet.size === 0 || wantedSet.has(name.toLowerCase()));
+
+        if (entries.length === 0) {
+            plotArea.innerHTML = '<div class="op-table-empty">No operating point data</div>';
             return;
         }
 
-        const colors = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'];
-        
-        // Store signal data on the plot container for scale toggling
+        let rows = '';
+        for (const [name, value] of entries) {
+            const probe = probeInfo.find(p => {
+                if (p.type === 'current' && p.sourceName) {
+                    return name.toLowerCase() === `i(${p.sourceName.toLowerCase()})`;
+                }
+                return name.toLowerCase() === `v(${(p.node || '').toLowerCase()})`;
+            });
+            const label = probe?.label || name;
+            const unit = name.toLowerCase().startsWith('i(') ? 'A' : 'V';
+            rows += `<tr><td class="op-probe">${label}</td><td class="op-value">${fmt(value)} ${unit}</td></tr>`;
+        }
+
+        plotArea.innerHTML = `
+            <table class="op-table">
+                <thead><tr><th>Probe</th><th>Value</th></tr></thead>
+                <tbody>${rows}</tbody>
+            </table>
+        `;
+    }
+
+    /**
+     * Plot AC analysis from a NormalizedResult with complex vectors.
+     */
+    _plotAcAnalysis(analysis, probeInfo, wantedSet, plotArea) {
+        const filtered = this._filterVectors(analysis.vectors, probeInfo, wantedSet);
+        if (filtered.length === 0) return;
+
+        const freqValues = analysis.sweep.values;
+
+        const signals = filtered.map(f => {
+            const v = f.vector;
+            const mag = [];
+            const phase = [];
+            for (let i = 0; i < v.real.length; i++) {
+                const re = v.real[i];
+                const im = v.imag ? v.imag[i] : 0;
+                mag.push(Math.sqrt(re * re + im * im));
+                phase.push(Math.atan2(im, re) * (180 / Math.PI));
+            }
+            return {
+                label: f.label,
+                color: f.color,
+                freq: freqValues,
+                magnitude: mag,
+                phase
+            };
+        });
+
         const plotContainer = plotArea.closest('.plot-container');
-        plotContainer._acSignalData = validSignals;
-        plotContainer._acProbeColors = colors;
-        
-        // Setup scale toggle buttons
+        plotContainer._acSignalData = signals;
+
         const scaleButtons = plotContainer.querySelectorAll('.scale-btn');
         scaleButtons.forEach(btn => {
             btn.addEventListener('click', () => {
                 scaleButtons.forEach(b => b.classList.remove('active'));
                 btn.classList.add('active');
-                this._renderAcPlot(plotArea, plotContainer._acSignalData, plotContainer._acProbeColors, btn.dataset.scale);
+                this._renderAcPlot(plotArea, plotContainer._acSignalData, btn.dataset.scale);
             });
         });
-        
-        // Initial render in dB
-        this._renderAcPlot(plotArea, validSignals, colors, 'db');
+
+        this._renderAcPlot(plotArea, signals, 'db');
     }
-    
+
     /**
-     * Render AC plot with specified scale (dB or V)
+     * Render AC plot with specified scale (dB, V, or phase).
      */
-    _renderAcPlot(plotArea, validSignals, colors, scale) {
+    _renderAcPlot(plotArea, signals, scale) {
         const isDb = scale === 'db';
         const isPhase = scale === 'phase';
-        
+
         let yData, yLabel, traceSuffix;
         if (isPhase) {
             yData = sig => sig.phase;
@@ -2595,57 +2641,54 @@ class CircuitEditorApp {
             yLabel = 'Magnitude (V)';
             traceSuffix = 'V';
         }
-        
-        const traces = validSignals.map((sig, i) => ({
-            x: sig.freq,
+
+        const traces = signals.map(sig => ({
+            x: Array.from(sig.freq),
             y: yData(sig),
             type: 'scatter',
             mode: 'lines',
             name: `${sig.label} (${traceSuffix})`,
-            line: { color: sig.color || colors[i % colors.length], width: 2 }
+            line: { color: sig.color, width: 2 }
         }));
 
         const layout = {
-            paper_bgcolor: '#0d1b2a',
-            plot_bgcolor: '#0d1b2a',
-            font: { color: '#e2e8f0', size: 10 },
+            paper_bgcolor: '#ffffff',
+            plot_bgcolor: '#f8fafc',
+            font: { color: '#0f172a', size: 10 },
             xaxis: {
                 title: { text: 'Frequency (Hz)', font: { size: 11 } },
                 type: 'log',
-                gridcolor: '#334155',
-                zerolinecolor: '#334155',
-                linecolor: '#475569',
+                gridcolor: '#e2e8f0',
+                zerolinecolor: '#e2e8f0',
+                linecolor: '#cbd5e1',
                 linewidth: 1,
                 mirror: true,
                 tickfont: { size: 9 }
             },
             yaxis: {
                 title: { text: yLabel, font: { size: 11 } },
-                gridcolor: '#334155',
-                zerolinecolor: '#334155',
-                linecolor: '#475569',
+                gridcolor: '#e2e8f0',
+                zerolinecolor: '#e2e8f0',
+                linecolor: '#cbd5e1',
                 linewidth: 1,
                 mirror: true,
                 tickfont: { size: 9 }
             },
             margin: { t: 20, r: 20, b: 45, l: 50 },
             legend: {
-                x: 1,
-                xanchor: 'right',
-                y: 1,
-                bgcolor: 'rgba(15, 23, 42, 0.85)',
+                x: 1, xanchor: 'right', y: 1,
+                bgcolor: 'rgba(255, 255, 255, 0.92)',
+                bordercolor: '#dbe2ea', borderwidth: 1,
                 font: { size: 10 }
             }
         };
-        
-        // Use requestAnimationFrame to ensure DOM is ready and get actual dimensions
+
         requestAnimationFrame(() => {
             const rect = plotArea.getBoundingClientRect();
             layout.width = rect.width || 340;
             layout.height = rect.height || 260;
-            
             try {
-                window.Plotly.newPlot(plotArea, traces, layout, { 
+                window.Plotly.newPlot(plotArea, traces, layout, {
                     responsive: true,
                     modeBarButtonsToRemove: ['pan2d', 'zoomIn2d', 'zoomOut2d', 'autoScale2d']
                 });
@@ -2653,112 +2696,47 @@ class CircuitEditorApp {
                 console.error('[AC Plot] Plotly.newPlot error:', err);
             }
         });
+
+        const container = plotArea.closest('.plot-container');
+        if (container) {
+            this._setupYRangeControls(container, { hasDualAxis: false, y1Label: yLabel });
+        }
     }
 
     /**
-     * Plot time-domain results (transient, DC sweep)
-     * @param {Array<string>} lines - Data lines
-     * @param {Array} probeInfo - Probe metadata
-     * @param {string} analysisType - Type of analysis
-     * @param {HTMLElement} plotArea - The element to render the plot into
+     * Plot time-domain / DC sweep analysis from a NormalizedResult.
      */
-    _plotTimeDomainResults(lines, probeInfo, analysisType, plotArea) {
-        const xValues = [];
+    _plotSweepAnalysis(analysis, probeInfo, wantedSet, analysisType, plotArea) {
+        const filtered = this._filterVectors(analysis.vectors, probeInfo, wantedSet);
+        if (filtered.length === 0) return;
+
+        const xValues = Array.from(analysis.sweep.values);
         const signals = {};
         const signalMeta = [];
         const signalColors = {};
+        const defaultColors = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'];
 
-        const firstLine = lines.find(l => l.trim().length > 0);
-        if (!firstLine) {
-            this._appendRunOutput('[note] Unable to parse data for plotting');
-            return;
-        }
-
-        const firstParts = firstLine.trim().split(/\s+/).map(Number);
-        if (firstParts.length < 2 || !Number.isFinite(firstParts[0])) {
-            this._appendRunOutput('[note] Unable to parse data for plotting');
-            return;
-        }
-
-        // Detect whether wrdata produced paired time/value columns (time, v1, time, v2, ...)
-        const evenIndexedTimes = [];
-        for (let i = 0; i < firstParts.length; i += 2) {
-            evenIndexedTimes.push(firstParts[i]);
-        }
-        const timesConsistent = evenIndexedTimes.every(t => Number.isFinite(t) && Math.abs(t - evenIndexedTimes[0]) <= 1e-12);
-        const usePairedFormat = (firstParts.length % 2 === 0) && timesConsistent;
-
-        const inferredSignalCount = usePairedFormat ? Math.floor(firstParts.length / 2) : (firstParts.length - 1);
-        const signalCount = probeInfo?.length > 0 ? Math.max(probeInfo.length, inferredSignalCount) : inferredSignalCount;
-
-        for (let i = 0; i < signalCount; i++) {
-            const label = probeInfo?.[i]?.label || `Signal ${i + 1}`;
-            const type = probeInfo?.[i]?.type || 'voltage';
-            const color = probeInfo?.[i]?.color;
-            signalMeta.push({ label, type, color });
-            if (color) {
-                signalColors[label] = color;
-            }
-        }
-
-        lines.forEach((line) => {
-            const parts = line.trim().split(/\s+/).map(Number);
-            if (parts.length < 2 || !Number.isFinite(parts[0])) return;
-
-            const availableSignals = usePairedFormat ? Math.floor(parts.length / 2) : (parts.length - 1);
-            const lineSignalCount = Math.min(signalCount, availableSignals);
-
-            const timeValue = parts[0];
-            if (!Number.isFinite(timeValue)) return;
-            xValues.push(timeValue);
-
-            for (let i = 0; i < lineSignalCount; i++) {
-                const valIdx = usePairedFormat ? (i * 2) + 1 : i + 1;
-                if (valIdx >= parts.length) continue;
-                const val = parts[valIdx];
-                if (!Number.isFinite(val)) continue;
-
-                const sigName = signalMeta[i]?.label || `Signal ${i + 1}`;
-                if (!signals[sigName]) signals[sigName] = [];
-                signals[sigName].push(val);
-            }
+        filtered.forEach((f, i) => {
+            const label = f.label;
+            signalMeta.push({ label, type: f.type, color: f.color });
+            signalColors[label] = f.color;
+            signals[label] = Array.from(f.vector.real);
         });
 
-        if (xValues.length === 0 || Object.keys(signals).length === 0) {
-            this._appendRunOutput('[note] Unable to parse data for plotting');
-            return;
-        }
-
-        const defaultColors = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'];
-        
-        // Store parsed signal data on the container for X-Y mode switching
         const plotContainer = plotArea.closest('.plot-container');
-        plotContainer._signalData = {
-            xValues,
-            signals,
-            signalMeta,
-            signalColors,
-            defaultColors
-        };
+        plotContainer._signalData = { xValues, signals, signalMeta, signalColors, defaultColors };
         plotContainer._analysisType = analysisType;
-        
-        // Populate X-Y selector dropdowns if they exist
+
         this._populateXYSelectors(plotContainer, signalMeta);
-        
-        // Render in standard mode by default
         this._renderStandardPlot(plotArea, plotContainer._signalData, analysisType);
     }
-    
+
     /**
-     * Render a standard time-domain plot
-     * @param {HTMLElement} plotArea - Plot area element
-     * @param {Object} signalData - Signal data with xValues, signals, signalMeta, signalColors
-     * @param {string} analysisType - Analysis type
+     * Render a standard time-domain plot.
      */
     _renderStandardPlot(plotArea, signalData, analysisType) {
         const { xValues, signals, signalMeta, signalColors, defaultColors } = signalData;
 
-        // Keep voltage/current separated to allow dual axes
         let hasVoltage = false;
         let hasCurrent = false;
         const traces = [];
@@ -2780,202 +2758,269 @@ class CircuitEditorApp {
             });
         });
 
-        // Determine axis labels based on analysis type
         let xAxisTitle = 'Time (s)';
-        if (analysisType === 'dc') {
-            xAxisTitle = 'Voltage (V)';
-        }
+        if (analysisType === 'dc') xAxisTitle = 'Voltage (V)';
 
-        // Choose primary Y title based on present signals
         let yAxisTitle = 'Voltage (V)';
-        if (hasCurrent && !hasVoltage) {
-            yAxisTitle = 'Current (A)';
-        }
+        if (hasCurrent && !hasVoltage) yAxisTitle = 'Current (A)';
 
         const layout = {
-            paper_bgcolor: '#0d1b2a',
-            plot_bgcolor: '#0d1b2a',
-            font: { color: '#e2e8f0', size: 10 },
+            paper_bgcolor: '#ffffff',
+            plot_bgcolor: '#f8fafc',
+            font: { color: '#0f172a', size: 10 },
             xaxis: {
                 title: { text: xAxisTitle, font: { size: 11 } },
-                gridcolor: '#334155',
-                zerolinecolor: '#334155',
-                linecolor: '#475569',
+                gridcolor: '#e2e8f0',
+                zerolinecolor: '#e2e8f0',
+                linecolor: '#cbd5e1',
                 linewidth: 1,
                 mirror: true,
                 tickfont: { size: 9 }
             },
             yaxis: {
                 title: { text: yAxisTitle, font: { size: 11 } },
-                gridcolor: '#334155',
-                zerolinecolor: '#334155',
-                linecolor: '#475569',
+                gridcolor: '#e2e8f0',
+                zerolinecolor: '#e2e8f0',
+                linecolor: '#cbd5e1',
                 linewidth: 1,
                 mirror: true,
                 tickfont: { size: 9 }
             },
             margin: { t: 20, r: 20, b: 45, l: 50 },
             legend: {
-                x: 1,
-                xanchor: 'right',
-                y: 1,
-                bgcolor: 'rgba(15, 23, 42, 0.85)',
+                x: 1, xanchor: 'right', y: 1,
+                bgcolor: 'rgba(255, 255, 255, 0.92)',
+                bordercolor: '#dbe2ea', borderwidth: 1,
                 font: { size: 10 }
             }
         };
 
         if (hasCurrent && hasVoltage) {
-            // Secondary axis for current traces
             layout.yaxis2 = {
                 title: { text: 'Current (A)', font: { size: 11 }, standoff: 20 },
                 overlaying: 'y',
                 side: 'right',
-                gridcolor: '#334155',
-                zerolinecolor: '#334155',
-                linecolor: '#475569',
+                gridcolor: '#e2e8f0',
+                zerolinecolor: '#e2e8f0',
+                linecolor: '#cbd5e1',
                 linewidth: 1,
                 mirror: true,
                 tickfont: { size: 9 }
             };
-            // Increase right margin to accommodate secondary y-axis
             layout.margin.r = 60;
         }
 
-        // Use requestAnimationFrame to ensure DOM is ready and get actual dimensions
         requestAnimationFrame(() => {
             const rect = plotArea.getBoundingClientRect();
             layout.width = rect.width || 340;
             layout.height = rect.height || 260;
-            window.Plotly.newPlot(plotArea, traces, layout, { 
+            window.Plotly.newPlot(plotArea, traces, layout, {
                 responsive: true,
                 modeBarButtonsToRemove: ['pan2d', 'zoomIn2d', 'zoomOut2d', 'autoScale2d']
             });
         });
+
+        const container = plotArea.closest('.plot-container');
+        if (container) {
+            const y2Label = 'Current (A)';
+            this._setupYRangeControls(container, {
+                hasDualAxis: hasCurrent && hasVoltage,
+                y1Label: yAxisTitle,
+                y2Label
+            });
+        }
     }
-    
+
     /**
-     * Populate X-Y axis selector dropdowns
-     * @param {HTMLElement} plotContainer - Plot container element
-     * @param {Array} signalMeta - Signal metadata array
+     * Populate X-Y axis selector dropdowns.
      */
     _populateXYSelectors(plotContainer, signalMeta) {
         const xSelect = plotContainer.querySelector('.xy-axis-select[data-axis="x"]');
         const ySelect = plotContainer.querySelector('.xy-axis-select[data-axis="y"]');
-        
+
         if (!xSelect || !ySelect || signalMeta.length < 2) return;
-        
-        // Clear existing options except the first placeholder
+
         xSelect.innerHTML = '<option value="">Select X...</option>';
         ySelect.innerHTML = '<option value="">Select Y...</option>';
-        
-        // Add signal options
+
         signalMeta.forEach((meta, index) => {
             const xOption = document.createElement('option');
             xOption.value = index;
             xOption.textContent = meta.label;
             xSelect.appendChild(xOption);
-            
+
             const yOption = document.createElement('option');
             yOption.value = index;
             yOption.textContent = meta.label;
             ySelect.appendChild(yOption);
         });
-        
-        // Auto-select first two signals as defaults
+
         if (signalMeta.length >= 2) {
             xSelect.value = '0';
             ySelect.value = '1';
         }
     }
-    
+
     /**
-     * Update X-Y plot based on current selector values
-     * @param {HTMLElement} plotContainer - Plot container element
+     * Update X-Y plot based on current selector values.
      */
     _updateXYPlot(plotContainer) {
         const xSelect = plotContainer.querySelector('.xy-axis-select[data-axis="x"]');
         const ySelect = plotContainer.querySelector('.xy-axis-select[data-axis="y"]');
         const plotArea = plotContainer.querySelector('.plot-area');
-        
+
         if (!xSelect || !ySelect || !plotArea || !plotContainer._signalData) return;
-        
+
         const xIndex = parseInt(xSelect.value);
         const yIndex = parseInt(ySelect.value);
-        
+
         if (!Number.isFinite(xIndex) || !Number.isFinite(yIndex)) {
-            // Show message if selections are incomplete
-            plotArea.innerHTML = '<div style=\"display: flex; align-items: center; justify-content: center; height: 100%; color: #94a3b8; font-size: 12px;\">Select X and Y signals to plot</div>';
+            plotArea.innerHTML = '<div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #94a3b8; font-size: 12px;">Select X and Y signals to plot</div>';
             return;
         }
-        
+
         if (xIndex === yIndex) {
-            // Show warning if same signal selected for both axes
-            plotArea.innerHTML = '<div style=\"display: flex; align-items: center; justify-content: center; height: 100%; color: #f59e0b; font-size: 12px;\">Please select different signals for X and Y axes</div>';
+            plotArea.innerHTML = '<div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #f59e0b; font-size: 12px;">Please select different signals for X and Y axes</div>';
             return;
         }
-        
+
         this._renderXYPlot(plotArea, plotContainer._signalData, xIndex, yIndex);
     }
-    
+
     /**
-     * Render an X-Y plot (one signal vs another)
-     * @param {HTMLElement} plotArea - Plot area element
-     * @param {Object} signalData - Signal data with signals, signalMeta, signalColors
-     * @param {number} xIndex - Index of signal to use for X axis
-     * @param {number} yIndex - Index of signal to use for Y axis
+     * Set up Y-axis range controls for a plot container.
+     * @param {HTMLElement} container - The .plot-container element
+     * @param {object} opts
+     * @param {boolean} opts.hasDualAxis - Whether a second Y axis (yaxis2) exists
+     * @param {string}  opts.y1Label    - Short label for YAxis 1
+     * @param {string}  opts.y2Label    - Short label for YAxis 2
+     */
+    _setupYRangeControls(container, { hasDualAxis = false, y1Label = 'Y', y2Label = 'Y2' } = {}) {
+        const el = container.querySelector('.plot-yrange-controls');
+        if (!el) return;
+
+        const makeRow = (axisKey, labelText) => {
+            const row = document.createElement('div');
+            row.className = 'yrange-row';
+
+            const label = document.createElement('span');
+            label.className = 'yrange-label';
+            label.textContent = labelText;
+            label.title = labelText;
+
+            const minInput = document.createElement('input');
+            minInput.type = 'number';
+            minInput.className = 'yrange-input';
+            minInput.placeholder = 'min';
+            minInput.step = 'any';
+
+            const sep = document.createElement('span');
+            sep.className = 'yrange-sep';
+            sep.textContent = '–';
+
+            const maxInput = document.createElement('input');
+            maxInput.type = 'number';
+            maxInput.className = 'yrange-input';
+            maxInput.placeholder = 'max';
+            maxInput.step = 'any';
+
+            const autoBtn = document.createElement('button');
+            autoBtn.className = 'yrange-auto-btn';
+            autoBtn.textContent = 'Auto';
+
+            row.appendChild(label);
+            row.appendChild(minInput);
+            row.appendChild(sep);
+            row.appendChild(maxInput);
+            row.appendChild(autoBtn);
+
+            const apply = () => {
+                const plotArea = container.querySelector('.plot-area');
+                if (!plotArea || !window.Plotly) return;
+                const minVal = minInput.value !== '' ? parseFloat(minInput.value) : null;
+                const maxVal = maxInput.value !== '' ? parseFloat(maxInput.value) : null;
+                const update = {};
+                if (minVal !== null && maxVal !== null && isFinite(minVal) && isFinite(maxVal)) {
+                    update[`${axisKey}.range`] = [minVal, maxVal];
+                    update[`${axisKey}.autorange`] = false;
+                } else {
+                    update[`${axisKey}.autorange`] = true;
+                }
+                window.Plotly.relayout(plotArea, update);
+            };
+
+            minInput.addEventListener('blur', apply);
+            maxInput.addEventListener('blur', apply);
+            minInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.target.blur(); } });
+            maxInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.target.blur(); } });
+
+            autoBtn.addEventListener('click', () => {
+                minInput.value = '';
+                maxInput.value = '';
+                apply();
+            });
+
+            return row;
+        };
+
+        el.innerHTML = '';
+        el.appendChild(makeRow('yaxis', y1Label));
+        if (hasDualAxis) {
+            el.appendChild(makeRow('yaxis2', y2Label));
+        }
+    }
+
+    /**
+     * Render an X-Y plot (one signal vs another).
      */
     _renderXYPlot(plotArea, signalData, xIndex, yIndex) {
         const { signals, signalMeta, signalColors, defaultColors } = signalData;
-        
+
         const xMeta = signalMeta[xIndex];
         const yMeta = signalMeta[yIndex];
-        
         if (!xMeta || !yMeta) return;
-        
+
         const xValues = signals[xMeta.label];
         const yValues = signals[yMeta.label];
-        
         if (!xValues || !yValues) return;
-        
-        // Ensure both arrays have the same length
+
         const minLength = Math.min(xValues.length, yValues.length);
         const xData = xValues.slice(0, minLength);
         const yData = yValues.slice(0, minLength);
-        
+
         const trace = {
             x: xData,
             y: yData,
             type: 'scatter',
             mode: 'lines',
             name: `${yMeta.label} vs ${xMeta.label}`,
-            line: { 
-                color: signalColors[yMeta.label] || defaultColors[yIndex % defaultColors.length], 
-                width: 2 
+            line: {
+                color: signalColors[yMeta.label] || defaultColors[yIndex % defaultColors.length],
+                width: 2
             }
         };
-        
-        // Determine axis labels based on signal types
+
         const xUnit = xMeta.type === 'current' ? 'A' : 'V';
         const yUnit = yMeta.type === 'current' ? 'A' : 'V';
-        
+
         const layout = {
-            paper_bgcolor: '#0d1b2a',
-            plot_bgcolor: '#0d1b2a',
-            font: { color: '#e2e8f0', size: 10 },
+            paper_bgcolor: '#ffffff',
+            plot_bgcolor: '#f8fafc',
+            font: { color: '#0f172a', size: 10 },
             xaxis: {
                 title: { text: `${xMeta.label} (${xUnit})`, font: { size: 11 } },
-                gridcolor: '#334155',
-                zerolinecolor: '#334155',
-                linecolor: '#475569',
+                gridcolor: '#e2e8f0',
+                zerolinecolor: '#e2e8f0',
+                linecolor: '#cbd5e1',
                 linewidth: 1,
                 mirror: true,
                 tickfont: { size: 9 }
             },
             yaxis: {
                 title: { text: `${yMeta.label} (${yUnit})`, font: { size: 11 } },
-                gridcolor: '#334155',
-                zerolinecolor: '#334155',
-                linecolor: '#475569',
+                gridcolor: '#e2e8f0',
+                zerolinecolor: '#e2e8f0',
+                linecolor: '#cbd5e1',
                 linewidth: 1,
                 mirror: true,
                 tickfont: { size: 9 }
@@ -2983,15 +3028,13 @@ class CircuitEditorApp {
             margin: { t: 20, r: 20, b: 45, l: 50 },
             showlegend: false
         };
-        
-        // Use requestAnimationFrame to ensure DOM is ready and get actual dimensions
+
         requestAnimationFrame(() => {
             const rect = plotArea.getBoundingClientRect();
             layout.width = rect.width || 340;
             layout.height = rect.height || 260;
-            
             try {
-                window.Plotly.newPlot(plotArea, [trace], layout, { 
+                window.Plotly.newPlot(plotArea, [trace], layout, {
                     responsive: true,
                     modeBarButtonsToRemove: ['pan2d', 'zoomIn2d', 'zoomOut2d', 'autoScale2d']
                 });
@@ -2999,8 +3042,13 @@ class CircuitEditorApp {
                 console.error('[X-Y Plot] Plotly.newPlot error:', err);
             }
         });
+
+        const container = plotArea.closest('.plot-container');
+        if (container) {
+            this._setupYRangeControls(container, { hasDualAxis: false, y1Label: `${yMeta.label} (${yUnit})` });
+        }
     }
-    
+
     // ==================== Save/Load ====================
     
     _setupSaveLoad() {
@@ -3030,7 +3078,7 @@ class CircuitEditorApp {
             wires: this.wireGraph.toJSON(),
             probes: this.probeManager.toJSON(),
             texts: this.textManager.toJSON(),
-            simulation: this.simulationDirectives,
+            simulation: document.getElementById('simulation-preview')?.value || '',
             counters: {
                 component: this._componentCounter,
                 designators: Array.from(this._designatorCounters.entries())
@@ -3045,7 +3093,8 @@ class CircuitEditorApp {
         this.wireGraph.clear();
         this.probeManager.clear();
         this.textManager.clear();
-        this.simulationDirectives = [];
+        const previewTa = document.getElementById('simulation-preview');
+        if (previewTa) previewTa.value = '';
         
         // Restore wires first
         if (data.wires) {
@@ -3088,8 +3137,20 @@ class CircuitEditorApp {
         }
         
         // Restore simulation directives
-        if (data.simulation) {
-            this.simulationDirectives = data.simulation;
+        // Restore simulation commands
+        if (data.simulation !== undefined) {
+            const ta = document.getElementById('simulation-preview');
+            if (ta) {
+                // Backward compat: old format was an array of directive objects
+                if (Array.isArray(data.simulation)) {
+                    ta.value = data.simulation.map(d => {
+                        const t = (d.text || d).trim().replace(/^\.(?=ac |tran |dc |op[ \b]|op$)/i, '');
+                        return t;
+                    }).join('\n');
+                } else {
+                    ta.value = data.simulation;
+                }
+            }
             this._updateSimulationBadge();
         }
         

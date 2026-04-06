@@ -2,6 +2,14 @@
  * NetlistGenerator - Generates ngspice netlist from circuit components and wires
  */
 
+const DEFAULT_SIMULATION_OPTIONS = [
+    '.options RELTOL=0.005',
+    '.options ABSTOL=10p',
+    '.options VNTOL=100u',
+    '.options MAXORD=2',
+    '.options ITL4=30'
+];
+
 export class NetlistGenerator {
     /**
      * @param {import('./ComponentManager.js').ComponentManager} componentManager
@@ -26,23 +34,18 @@ export class NetlistGenerator {
     /**
      * Generate a complete ngspice netlist
      * @param {Array} [customDirectives] - Optional simulation directives to use
-     * @param {Object} [options]
-     * @param {boolean} [options.includeControlBlock=false] - Append a .control block with run/wrdata
-     * @param {string[]} [options.controlSignals] - Explicit list of signals to pass to wrdata
      * @returns {string} The netlist text
      */
-    generate(customDirectives = null, options = {}) {
-        return this.generateWithMetadata(customDirectives, options).netlist;
+    generate(customDirectives = null) {
+        return this.generateWithMetadata(customDirectives).netlist;
     }
 
     /**
      * Generate netlist and return accompanying metadata
      * @param {Array} [customDirectives]
-     * @param {Object} [options]
-     * @returns {{ netlist: string, netMap: Map<number, string>, netNames: string[], probeInfo: Array<{label: string, node?: string, sourceName?: string, type: string}>, analysisType: string }}
+    * @returns {{ netlist: string, netMap: Map<number, string>, netNames: string[], probeInfo: Array<{label: string, node?: string, sourceName?: string, type: string}>, analysisType: string, runtimeSignals: string[] }}
      */
-    generateWithMetadata(customDirectives = null, options = {}) {
-        const { includeControlBlock = false, controlSignals = null } = options;
+    generateWithMetadata(customDirectives = null) {
 
         const lines = [];
         
@@ -101,40 +104,73 @@ export class NetlistGenerator {
             lines.push('');
         }
 
+        // Build probe info and signals for filtering results
+        const probeInfo = this._buildProbeInfo(netMap, currentProbeMeta);
+        const runtimeSignals = this._resolveControlSignals(null, netNames, probeInfo);
+
         // Add simulation commands and detect analysis type
         const directives = customDirectives || this.simulationDirectives;
         let analysisType = 'op'; // default
+
+        // Expand all directive texts into individual lines, split by ownership:
+        //   - Lines starting with '.' are standard SPICE directives (netlist body)
+        //   - All other non-empty lines are ngspice control commands (.control block)
+        const bodyLines = [];    // outside .control
+        const controlLines = []; // inside .control
+
         if (directives && directives.length > 0) {
-            lines.push('* Simulation');
             directives.forEach(dir => {
-                const text = dir.text || dir;
-                lines.push(text);
-                // Detect analysis type from directive
-                if (text.toLowerCase().startsWith('.ac')) analysisType = 'ac';
-                else if (text.toLowerCase().startsWith('.tran')) analysisType = 'tran';
-                else if (text.toLowerCase().startsWith('.dc')) analysisType = 'dc';
-                else if (text.toLowerCase().startsWith('.op')) analysisType = 'op';
+                const raw = dir.text || dir;
+                const split = raw.split('\n').map(l => l.trim()).filter(l => {
+                    if (!l.length || l.startsWith('*')) return false;
+                    const ll = l.toLowerCase();
+                    // Strip any .control/.endc the user typed — the generator adds its own
+                    if (ll === '.control' || ll === '.endc') return false;
+                    return true;
+                });
+                for (const line of split) {
+                    const lower = line.toLowerCase();
+                    // Detect analysis type from both dotted and bare forms
+                    if (lower.startsWith('.ac') || lower.startsWith('ac ')) analysisType = 'ac';
+                    else if (lower.startsWith('.tran') || lower.startsWith('tran ')) analysisType = 'tran';
+                    else if (lower.startsWith('.dc') || lower.startsWith('dc ')) analysisType = 'dc';
+                    else if (lower === '.op' || lower.startsWith('.op ') || lower === 'op') analysisType = 'op';
+
+                    // Analysis commands (.ac, .tran, .dc, .op) are stripped of their dot
+                    // and placed in the .control block using ngspice interactive syntax.
+                    // Other dot-directives (.param, .model, .include, etc.) stay in the body.
+                    const isAnalysis = lower === '.op' || lower.startsWith('.op ') ||
+                                       lower.startsWith('.ac ') || lower.startsWith('.tran ') ||
+                                       lower.startsWith('.dc ');
+                    if (isAnalysis) {
+                        controlLines.push(line.slice(1)); // strip leading dot
+                    } else if (line.startsWith('.')) {
+                        bodyLines.push(line);
+                    } else {
+                        controlLines.push(line);
+                    }
+                }
             });
-        } else {
+        }
+
+        lines.push('* Simulation');
+        lines.push(...this._resolveSimulationOptions(directives));
+        if (bodyLines.length > 0) {
+            lines.push(...bodyLines);
+        } else if (controlLines.length === 0) {
             // Default to operating point if no directives specified
-            lines.push('* Simulation');
             lines.push('.op');
         }
 
-        // Build probe info and signals for wrdata
-        const probeInfo = this._buildProbeInfo(netMap, currentProbeMeta);
-        
-        if (includeControlBlock) {
-            const signals = this._resolveControlSignals(controlSignals, netNames, probeInfo);
-            lines.push('.control');
-            lines.push('set filetype=ascii');
+        // The shared library API requires a .control block to trigger execution
+        lines.push('.control');
+        if (controlLines.length > 0) {
+            // User-supplied control commands (e.g. ac, alter, tran without leading dot)
+            lines.push(...controlLines);
+        } else {
             lines.push('run');
-            if (signals.length > 0) {
-                lines.push(`wrdata output.txt ${signals.join(' ')}`);
-            }
-            lines.push('quit');
-            lines.push('.endc');
         }
+        lines.push('.endc');
         
         lines.push('.end');
 
@@ -143,7 +179,8 @@ export class NetlistGenerator {
             netMap,
             netNames,
             probeInfo,
-            analysisType
+            analysisType,
+            runtimeSignals
         };
     }
 
@@ -778,6 +815,31 @@ export class NetlistGenerator {
         return netNames
             .filter(name => name !== '0')
             .map(name => `v(${name})`);
+    }
+
+    _resolveSimulationOptions(directives = []) {
+        const directiveTexts = (Array.isArray(directives) ? directives : [])
+            .map(entry => (entry?.text || entry || '').trim())
+            .filter(Boolean);
+
+        return DEFAULT_SIMULATION_OPTIONS.filter(optionLine => {
+            const optionKey = optionLine.split(/\s+/)[1]?.split('=')[0]?.toLowerCase();
+            if (!optionKey) return true;
+            return !directiveTexts.some(text => {
+                const normalized = text.toLowerCase();
+                return normalized.startsWith('.options') && normalized.includes(optionKey);
+            });
+        });
+    }
+
+    _hasDirective(directives = [], directiveName = '') {
+        const normalizedName = directiveName.trim().toLowerCase();
+        if (!normalizedName) return false;
+
+        return (Array.isArray(directives) ? directives : []).some(entry => {
+            const text = (entry?.text || entry || '').trim().toLowerCase();
+            return text.startsWith(normalizedName);
+        });
     }
 
     _sanitizeIdentifier(name, fallback, options = {}) {

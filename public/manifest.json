@@ -1,0 +1,6 @@
+{
+    "buildMode": "library",
+    "artifactKind": "main-module",
+    "primaryArtifact": "ngspice-lib.js",
+    "notes": "Shared-library build produced a JavaScript loader and WebAssembly main module."
+}

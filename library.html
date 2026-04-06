@@ -1,0 +1,410 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>ngspice Shared Library Demo</title>
+	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+	<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+	<style>
+		:root {
+			--bg: #f4efe5;
+			--panel: rgba(255, 255, 255, 0.78);
+			--panel-strong: rgba(255, 255, 255, 0.94);
+			--text: #1e2230;
+			--muted: #59627a;
+			--accent: #0f8a5f;
+			--accent-2: #f0ab3a;
+			--danger: #b64747;
+			--track: #dae3d9;
+			--mono: 'JetBrains Mono', monospace;
+			--sans: 'Space Grotesk', system-ui, sans-serif;
+			--shadow: 0 24px 60px rgba(40, 38, 27, 0.15);
+		}
+
+		* { box-sizing: border-box; }
+
+		body {
+			margin: 0;
+			min-height: 100vh;
+			color: var(--text);
+			font-family: var(--sans);
+			background:
+				radial-gradient(circle at 15% 20%, rgba(15, 138, 95, 0.12), transparent 30%),
+				radial-gradient(circle at 85% 0%, rgba(240, 171, 58, 0.18), transparent 34%),
+				linear-gradient(135deg, #efe8dc 0%, #f7f3eb 46%, #ece4d3 100%);
+			padding: 28px 18px 40px;
+		}
+
+		.shell {
+			width: min(1220px, 100%);
+			margin: 0 auto;
+			background: var(--panel);
+			border: 1px solid rgba(30, 34, 48, 0.08);
+			border-radius: 24px;
+			padding: 26px;
+			box-shadow: var(--shadow);
+			backdrop-filter: blur(12px);
+		}
+
+		header {
+			display: flex;
+			justify-content: space-between;
+			gap: 18px;
+			align-items: flex-start;
+			margin-bottom: 18px;
+		}
+
+		h1 {
+			margin: 0;
+			font-weight: 600;
+			letter-spacing: -0.03em;
+			font-size: clamp(28px, 4vw, 38px);
+		}
+
+		.eyebrow {
+			display: inline-flex;
+			align-items: center;
+			gap: 10px;
+			font-size: 13px;
+			letter-spacing: 0.08em;
+			text-transform: uppercase;
+			color: var(--muted);
+		}
+
+		.pill {
+			padding: 5px 12px;
+			border-radius: 999px;
+			background: rgba(15, 138, 95, 0.1);
+			color: var(--accent);
+			border: 1px solid rgba(15, 138, 95, 0.2);
+		}
+
+		.grid {
+			display: grid;
+			grid-template-columns: minmax(340px, 1fr) minmax(340px, 0.9fr);
+			gap: 18px;
+		}
+
+		.card {
+			background: var(--panel-strong);
+			border: 1px solid rgba(30, 34, 48, 0.08);
+			border-radius: 18px;
+			padding: 16px;
+			min-height: 0;
+			display: flex;
+			flex-direction: column;
+			gap: 12px;
+		}
+
+		label, .section-title {
+			font-size: 13px;
+			letter-spacing: 0.04em;
+			text-transform: uppercase;
+			color: var(--muted);
+		}
+
+		textarea {
+			width: 100%;
+			min-height: 420px;
+			background: #fdfbf6;
+			color: var(--text);
+			border: 1px solid rgba(30, 34, 48, 0.1);
+			border-radius: 14px;
+			padding: 14px;
+			font: 14px/1.45 var(--mono);
+			resize: vertical;
+			outline: none;
+		}
+
+		textarea:focus {
+			border-color: rgba(15, 138, 95, 0.5);
+			box-shadow: 0 0 0 4px rgba(15, 138, 95, 0.08);
+		}
+
+		.controls {
+			display: flex;
+			gap: 10px;
+			flex-wrap: wrap;
+			align-items: center;
+		}
+
+		button {
+			border: none;
+			border-radius: 12px;
+			padding: 12px 16px;
+			font: 600 14px var(--sans);
+			cursor: pointer;
+			background: linear-gradient(135deg, var(--accent) 0%, #1eb97f 100%);
+			color: white;
+			box-shadow: 0 12px 24px rgba(15, 138, 95, 0.18);
+		}
+
+		button:disabled {
+			opacity: 0.55;
+			cursor: not-allowed;
+			box-shadow: none;
+		}
+
+		button.ghost {
+			background: transparent;
+			color: var(--text);
+			border: 1px solid rgba(30, 34, 48, 0.12);
+			box-shadow: none;
+		}
+
+		.status-line {
+			font-size: 14px;
+			color: var(--muted);
+		}
+
+		.progress-shell {
+			display: grid;
+			gap: 10px;
+		}
+
+		.progress-track {
+			height: 16px;
+			border-radius: 999px;
+			background: var(--track);
+			overflow: hidden;
+		}
+
+		.progress-fill {
+			height: 100%;
+			width: 0%;
+			background: linear-gradient(90deg, var(--accent) 0%, var(--accent-2) 100%);
+			transition: width 0.08s linear;
+		}
+
+		.metrics {
+			display: grid;
+			grid-template-columns: repeat(3, minmax(0, 1fr));
+			gap: 10px;
+		}
+
+		.metric {
+			padding: 12px;
+			border-radius: 14px;
+			background: #fdfbf6;
+			border: 1px solid rgba(30, 34, 48, 0.06);
+		}
+
+		.metric strong {
+			display: block;
+			font-size: 22px;
+			margin-top: 6px;
+		}
+
+		.log {
+			min-height: 300px;
+			max-height: 420px;
+			overflow: auto;
+			padding: 14px;
+			border-radius: 14px;
+			background: #161a22;
+			color: #f7f7f7;
+			font: 12px/1.4 var(--mono);
+			white-space: pre-wrap;
+			word-break: break-word;
+		}
+
+		.log .stderr { color: #ff9d9d; }
+		.log .stdout { color: #f7f7f7; }
+		.log .meta { color: #98b7d5; }
+
+		.note {
+			font-size: 13px;
+			color: var(--muted);
+		}
+
+		@media (max-width: 900px) {
+			.grid {
+				grid-template-columns: 1fr;
+			}
+
+			.metrics {
+				grid-template-columns: 1fr;
+			}
+		}
+	</style>
+</head>
+<body>
+	<div class="shell">
+		<header>
+			<div>
+				<div class="eyebrow">
+					<span class="pill">Shared Library</span>
+					<span>Worker-backed browser API</span>
+				</div>
+				<h1>ngspice Shared Library Demo</h1>
+				<p class="note">This demo uses the library-oriented WASM build and computes transient progress from the current time vector divided by the parsed <code>.tran</code> stop time.</p>
+			</div>
+		</header>
+
+		<div class="grid">
+			<section class="card">
+				<label for="netlist">Netlist</label>
+				<textarea id="netlist" spellcheck="false"></textarea>
+				<div class="controls">
+					<button id="run">Run library simulation</button>
+					<button id="reset" class="ghost">Reset ngspice</button>
+					<button id="clear" class="ghost">Clear log</button>
+				</div>
+				<div class="note">Serve the repository root so this page can fetch <code>../output-lib/ngspice-lib.js</code>, <code>../output-lib/ngspice-lib.wasm</code>, the code models, and <code>spinit</code>.</div>
+			</section>
+
+			<section class="card">
+				<div class="section-title">Progress</div>
+				<div class="progress-shell">
+					<div class="progress-track"><div id="progressFill" class="progress-fill"></div></div>
+					<div id="status" class="status-line">Idle</div>
+				</div>
+				<div class="metrics">
+					<div class="metric">
+						<div class="section-title">Percent</div>
+						<strong id="progressPercent">0.0%</strong>
+					</div>
+					<div class="metric">
+						<div class="section-title">Current Time</div>
+						<strong id="currentTime">0 s</strong>
+					</div>
+					<div class="metric">
+						<div class="section-title">Final Time</div>
+						<strong id="finalTime">0 s</strong>
+					</div>
+				</div>
+				<div class="section-title">Output</div>
+				<div id="log" class="log" aria-live="polite"></div>
+			</section>
+		</div>
+	</div>
+
+	<script type="module">
+		import { NgspiceLibraryClient } from './ngspice-lib-client.js';
+
+		const defaultNetlist = `* Shared library progress demo
+V1 in 0 PULSE(0 5 0 10n 10n 1m 2m)
+R1 in out 1k
+C1 out 0 10u
+
+.control
+	set numdgt=6
+	tran 10u 10m
+	print v(in) v(out)
+.endc
+.end
+`;
+
+		const client = new NgspiceLibraryClient({ assetBaseUrl: '../output-lib' });
+		const netlistEl = document.getElementById('netlist');
+		const runBtn = document.getElementById('run');
+		const resetBtn = document.getElementById('reset');
+		const clearBtn = document.getElementById('clear');
+		const progressFill = document.getElementById('progressFill');
+		const progressPercent = document.getElementById('progressPercent');
+		const currentTime = document.getElementById('currentTime');
+		const finalTime = document.getElementById('finalTime');
+		const statusEl = document.getElementById('status');
+		const logEl = document.getElementById('log');
+
+		netlistEl.value = defaultNetlist;
+		appendLog('Ready. Build the library artifacts, serve the repository root, and run a transient analysis.', 'meta');
+
+		runBtn.addEventListener('click', async () => {
+			setRunning(true);
+			resetProgress();
+			appendLog('Starting shared-library simulation...', 'meta');
+
+			try {
+				const result = await client.run(netlistEl.value, {
+					onStdout: (line) => appendLog(line, 'stdout'),
+					onStderr: (line) => appendLog(line, 'stderr'),
+					onStatus: (message) => setStatus(message),
+					onProgress: ({ progress, currentTime: now, finalTime: stop }) => {
+						updateProgress(progress, now, stop);
+					},
+				});
+
+				updateProgress(result.progress || 1, result.finalTime || 0, result.finalTime || 0);
+				setStatus(`Completed (exit ${result.exitCode})`);
+			} catch (error) {
+				appendLog(error.message || String(error), 'stderr');
+				setStatus('Errored');
+			} finally {
+				setRunning(false);
+			}
+		});
+
+		resetBtn.addEventListener('click', async () => {
+			try {
+				await client.reset();
+				appendLog('ngspice library state reset.', 'meta');
+				setStatus('Reset complete');
+				resetProgress();
+			} catch (error) {
+				appendLog(error.message || String(error), 'stderr');
+			}
+		});
+
+		clearBtn.addEventListener('click', () => {
+			logEl.innerHTML = '';
+			appendLog('Output cleared.', 'meta');
+		});
+
+		window.addEventListener('beforeunload', () => {
+			client.dispose();
+		});
+
+		function appendLog(line, variant) {
+			const entry = document.createElement('div');
+			entry.className = variant;
+			entry.textContent = line;
+			logEl.appendChild(entry);
+			logEl.scrollTop = logEl.scrollHeight;
+		}
+
+		function setStatus(text) {
+			statusEl.textContent = text;
+		}
+
+		function setRunning(isRunning) {
+			runBtn.disabled = isRunning;
+			resetBtn.disabled = isRunning;
+		}
+
+		function resetProgress() {
+			updateProgress(0, 0, 0);
+			setStatus('Idle');
+		}
+
+		function updateProgress(progress, now, stop) {
+			const percent = Math.max(0, Math.min(progress || 0, 1));
+			progressFill.style.width = `${(percent * 100).toFixed(2)}%`;
+			progressPercent.textContent = `${(percent * 100).toFixed(1)}%`;
+			currentTime.textContent = formatSeconds(now || 0);
+			finalTime.textContent = formatSeconds(stop || 0);
+		}
+
+		function formatSeconds(value) {
+			if (!value) {
+				return '0 s';
+			}
+
+			if (value >= 1) {
+				return `${value.toFixed(4)} s`;
+			}
+
+			if (value >= 1e-3) {
+				return `${(value * 1e3).toFixed(3)} ms`;
+			}
+
+			if (value >= 1e-6) {
+				return `${(value * 1e6).toFixed(3)} us`;
+			}
+
+			return `${value.toExponential(3)} s`;
+		}
+	</script>
+</body>
+</html>

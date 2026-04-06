@@ -18,77 +18,47 @@ body {
     padding: 20px;
     background: #fff;
     color: #222;
-    min-height: 100vh;
+    height: 100vh;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
 }
 
 h1 {
     margin: 0 0 24px 0;
     font-size: 24px;
-    color: #111;
-    font-weight: 600;
-    letter-spacing: -0.3px;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif;
-
+    font-weight: 700;
 }
 
-/* Layout */
-.container {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 320px;
-    gap: 20px;
-    max-width: 1600px;
-    margin: 0 auto;
-    align-items: stretch;
-    flex: 1;
-    min-height: 0;
-    height: calc(100vh - 120px);
-}
-
-/* Page header row (title + nav button) */
 .page-header {
     display: flex;
-    justify-content: space-between;
     align-items: center;
+    justify-content: space-between;
     gap: 16px;
-    margin-bottom: 16px;
+    margin-bottom: 10px;
+    flex-shrink: 0;
 }
 
-.page-header h1 {
-    margin: 0;
-}
-
-/* New App Layout for Circuit Editor */
 .app-layout {
-    display: flex;
-    gap: 16px;
     flex: 1;
+    display: flex;
+    gap: 20px;
     min-height: 0;
-    max-height: calc(100vh - 100px);
+    min-width: 0;
+    overflow: hidden;
 }
 
 .sidebar {
     width: 200px;
     flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
     background: #fff;
     border: 1px solid #e5e5e5;
     border-radius: 8px;
-    padding: 16px;
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
     overflow: hidden;
-}
-
-.sidebar h2 {
-    margin: 0 0 12px 0;
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 1.5px;
-    color: #3b82f6;
-    font-weight: 600;
-    flex-shrink: 0;
 }
 
 .sidebar-header {
@@ -96,29 +66,18 @@ h1 {
     align-items: center;
     justify-content: space-between;
     gap: 8px;
-    margin-bottom: 12px;
+    padding: 12px 14px;
+    border-bottom: 1px solid #e5e5e5;
+    background: #fafafa;
 }
 
 .sidebar-header h2 {
     margin: 0;
-    flex: 1;
-}
-
-/* Icon-minimal button - subtle icon-only button */
-.btn-icon-minimal {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
-    padding: 0;
-    background: transparent;
-    border: 1px solid transparent;
-    border-radius: 6px;
-    color: #94a3b8;
-    cursor: pointer;
-    transition: all 0.15s ease;
-    flex-shrink: 0;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: #3b82f6;
+    font-weight: 600;
 }
 
 .btn-icon-minimal:hover {
@@ -143,6 +102,7 @@ h1 {
     gap: 12px;
     min-width: 0;
     min-height: 0;
+    overflow: hidden;
 }
 
 .workspace-top {
@@ -150,6 +110,7 @@ h1 {
     display: flex;
     gap: 4px;
     min-height: 0;
+    overflow: hidden;
 }
 
 /* Results Panel */
@@ -219,92 +180,170 @@ h1 {
     border: 1px solid #e5e5e5;
     border-radius: 8px;
     overflow: hidden;
-    min-height: 400px;
+    min-height: 0;
 }
 
 .results-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 12px 16px;
+    gap: 12px;
+    padding: 8px 12px;
     border-bottom: 1px solid #e5e5e5;
     background: #fafafa;
+    flex-shrink: 0;
 }
 
 .results-header h3 {
     margin: 0;
-    font-size: 13px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: #3b82f6;
     font-weight: 600;
-    color: #111;
+}
+
+.results-runner-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
 }
 
 .results-status {
-    padding: 8px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 14px;
+    border-bottom: 1px solid #eef2f7;
+    background: #fff;
+    flex-shrink: 0;
+}
+
+.results-debug {
+    display: none;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 4px;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
     background: #f8fafc;
-    border-bottom: 1px solid #e5e5e5;
+    overflow: hidden;
+}
+
+.results-debug.is-visible {
+    display: flex;
+}
+
+.debug-console-toggle {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    cursor: pointer;
+    font-size: 11px;
+    color: #64748b;
+    user-select: none;
+    white-space: nowrap;
+}
+
+.debug-console-toggle input {
+    display: none;
+}
+
+.debug-toggle-track {
+    width: 28px;
+    height: 16px;
+    background: #cbd5e1;
+    border-radius: 8px;
+    position: relative;
+    flex-shrink: 0;
+    transition: background 0.2s;
+}
+
+.debug-toggle-track::after {
+    content: '';
+    position: absolute;
+    width: 12px;
+    height: 12px;
+    background: #fff;
+    border-radius: 50%;
+    top: 2px;
+    left: 2px;
+    transition: transform 0.2s;
+}
+
+.debug-console-toggle input:checked + .debug-toggle-track {
+    background: #3b82f6;
+}
+
+.debug-console-toggle input:checked + .debug-toggle-track::after {
+    transform: translateX(12px);
+}
+
+.results-debug-header {
+    padding: 8px 10px;
+    border-bottom: 1px solid #e2e8f0;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #475569;
+    background: #f1f5f9;
+}
+
+.results-debug-output {
+    margin: 0;
+    padding: 10px;
+    min-height: 84px;
+    max-height: 180px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: 'SF Mono', 'Monaco', 'Cascadia Code', 'Courier New', monospace;
+    font-size: 11px;
+    line-height: 1.45;
+    color: #1e293b;
+    background: #f8fafc;
 }
 
 .results-plots {
     flex: 1;
-    overflow-y: auto;
-    padding: 12px;
+    min-height: 0;
     display: flex;
     flex-direction: column;
     gap: 12px;
-    background: #1e293b;
+    overflow: auto;
+    padding: 14px;
+    background: #fff;
 }
 
 .plot-placeholder {
-    flex: 1;
+    min-height: 220px;
     display: flex;
-    flex-direction: column;
     align-items: center;
     justify-content: center;
-    color: #64748b;
     gap: 12px;
-    min-height: 200px;
     padding: 24px;
-    text-align: center;
+    color: #334155;
+    font-size: 16px;
+    line-height: 1.4;
 }
 
 .plot-placeholder .material-symbols-outlined {
-    font-size: 56px;
-    opacity: 0.4;
-}
-
-.plot-placeholder span {
-    font-size: 13px;
-    line-height: 1.5;
-}
-
-.plot-placeholder.running .material-symbols-outlined {
-    animation: pulse 1.5s ease-in-out infinite;
+    font-size: 28px;
+    color: #1f2937;
 }
 
 .plot-placeholder.error {
-    color: #f87171;
-}
-
-.plot-placeholder.error .material-symbols-outlined {
-    color: #ef4444;
-    opacity: 0.7;
-}
-
-.plot-placeholder small {
-    font-size: 11px;
-    opacity: 0.7;
-}
-
-@keyframes pulse {
-    0%, 100% { opacity: 0.4; transform: scale(1); }
-    50% { opacity: 0.7; transform: scale(1.05); }
+    color: #991b1b;
 }
 
 .plot-container {
-    background: #0f172a;
-    border-radius: 6px;
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
     overflow: hidden;
-    border: 1px solid #1e293b;
+    flex-shrink: 0;
 }
 
 .plot-container .plot-header {
@@ -312,13 +351,14 @@ h1 {
     align-items: center;
     justify-content: space-between;
     padding: 8px 12px;
-    background: #1e293b;
+    background: #f8fafc;
+    border-bottom: 1px solid #e5e7eb;
 }
 
 .plot-container .plot-title {
     font-size: 11px;
     font-weight: 600;
-    color: #94a3b8;
+    color: #475569;
     text-transform: uppercase;
     letter-spacing: 1px;
 }
@@ -332,7 +372,7 @@ h1 {
 .plot-scale-toggle {
     display: flex;
     gap: 2px;
-    background: #0f172a;
+    background: #e2e8f0;
     border-radius: 4px;
     padding: 2px;
 }
@@ -343,14 +383,14 @@ h1 {
     font-weight: 600;
     background: transparent;
     border: none;
-    color: #64748b;
+    color: #475569;
     cursor: pointer;
     border-radius: 3px;
     transition: all 0.15s;
 }
 
 .plot-scale-toggle .scale-btn:hover {
-    color: #94a3b8;
+    color: #0f172a;
 }
 
 .plot-scale-toggle .scale-btn.active {
@@ -364,17 +404,18 @@ h1 {
     justify-content: center;
     width: 26px;
     height: 26px;
-    background: #0f172a;
-    border: none;
+    background: #fff;
+    border: 1px solid #dbe2ea;
     border-radius: 4px;
-    color: #64748b;
+    color: #475569;
     cursor: pointer;
     transition: all 0.15s;
 }
 
 .plot-export-btn:hover {
-    background: #334155;
-    color: #e2e8f0;
+    background: #f8fafc;
+    color: #0f172a;
+    border-color: #cbd5e1;
 }
 
 .plot-export-btn .material-symbols-outlined {
@@ -386,97 +427,219 @@ h1 {
     width: 100%;
 }
 
-/* Console Panel */
-.console-panel {
-    background: #0f172a;
-    border-radius: 8px;
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-    transition: max-height 0.3s ease;
-    max-height: 300px;
+.plot-container .plot-area:has(.op-table) {
+    height: auto;
 }
 
-.console-panel.collapsed {
-    max-height: 44px;
+.op-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
 }
 
-.console-header {
-    display: flex;
-    align-items: center;
-    background: #1e293b;
-    border-bottom: 1px solid #334155;
-    flex-shrink: 0;
-}
-
-.console-toggle {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 10px 16px;
-    background: transparent;
-    border: none;
-    color: #94a3b8;
-    font-size: 12px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.15s;
+.op-table th {
     text-align: left;
+    padding: 7px 14px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #64748b;
+    border-bottom: 1px solid #e5e7eb;
+    background: #f8fafc;
 }
 
-.console-toggle:hover {
-    background: #334155;
-    color: #e2e8f0;
+.op-table td {
+    padding: 8px 14px;
+    border-bottom: 1px solid #f1f5f9;
+    color: #1e293b;
 }
 
-.console-toggle .material-symbols-outlined {
-    font-size: 18px;
+.op-table tbody tr:last-child td {
+    border-bottom: none;
 }
 
-.console-toggle .toggle-icon {
-    margin-left: auto;
-    transition: transform 0.2s;
+.op-table .op-probe {
+    font-weight: 500;
+    color: #475569;
+    width: 50%;
 }
 
-.console-panel.collapsed .console-toggle .toggle-icon {
-    transform: rotate(180deg);
+.op-table .op-value {
+    font-family: monospace;
+    font-size: 12px;
+    color: #0f172a;
 }
 
-.console-action-btn {
-    padding: 8px;
-    background: transparent;
-    border: none;
+.op-table-empty {
+    padding: 24px;
+    text-align: center;
     color: #94a3b8;
-    cursor: pointer;
+    font-size: 13px;
+}
+
+.plot-message {
+    min-height: 260px;
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: all 0.15s;
+    gap: 16px;
+    padding: 24px;
+    color: #64748b;
+}
+
+.plot-message.error {
+    color: #b91c1c;
+}
+
+.plot-message .material-symbols-outlined {
+    font-size: 40px;
+    color: #ef4444;
+    opacity: 0.8;
+}
+
+.plot-message-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-width: 560px;
+}
+
+.plot-message-copy strong {
+    font-size: 12px;
+    color: #b91c1c;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.plot-mode-toggle {
+    display: flex;
+    gap: 2px;
+    background: #e2e8f0;
     border-radius: 4px;
-    margin-right: 8px;
+    padding: 2px;
 }
 
-.console-action-btn:hover {
-    background: #334155;
-    color: #e2e8f0;
+.plot-mode-toggle .mode-btn {
+    padding: 3px 8px;
+    font-size: 10px;
+    font-weight: 600;
+    background: transparent;
+    border: none;
+    color: #475569;
+    cursor: pointer;
+    border-radius: 3px;
+    transition: all 0.15s;
 }
 
-.console-action-btn .material-symbols-outlined {
-    font-size: 18px;
+.plot-mode-toggle .mode-btn:hover {
+    color: #0f172a;
 }
 
-.console-output {
-    flex: 1;
-    margin: 0;
-    padding: 12px 16px;
-    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+.plot-mode-toggle .mode-btn.active {
+    background: #3b82f6;
+    color: #fff;
+}
+
+.plot-xy-selectors {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    border-bottom: 1px solid #e5e7eb;
+    background: #f8fafc;
+}
+
+.xy-selector-label {
     font-size: 11px;
-    color: #e2e8f0;
-    overflow: auto;
-    white-space: pre-wrap;
-    min-height: 100px;
-    max-height: 240px;
+    font-weight: 600;
+    color: #475569;
+}
+
+.xy-axis-select {
+    min-width: 0;
+    padding: 5px 8px;
+    border: 1px solid #dbe2ea;
+    border-radius: 6px;
+    background: #fff;
+    color: #0f172a;
+    font-size: 12px;
+}
+
+.plot-message-copy span {
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+/* Y-axis range controls */
+.plot-yrange-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 5px 10px;
+    border-top: 1px solid #e5e7eb;
+    background: #f8fafc;
+}
+
+.yrange-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.yrange-label {
+    font-size: 10px;
+    font-weight: 600;
+    color: #64748b;
+    min-width: 60px;
+    max-width: 60px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: right;
+    flex-shrink: 0;
+}
+
+.yrange-input {
+    width: 72px;
+    padding: 3px 5px;
+    border: 1px solid #dbe2ea;
+    border-radius: 4px;
+    background: #fff;
+    color: #0f172a;
+    font-size: 11px;
+    font-family: monospace;
+    flex-shrink: 0;
+}
+
+.yrange-input:focus {
+    outline: none;
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 2px #bfdbfe55;
+}
+
+.yrange-sep {
+    font-size: 11px;
+    color: #94a3b8;
+    flex-shrink: 0;
+}
+
+.yrange-auto-btn {
+    padding: 3px 7px;
+    font-size: 10px;
+    font-weight: 600;
+    background: #fff;
+    border: 1px solid #dbe2ea;
+    border-radius: 4px;
+    color: #475569;
+    cursor: pointer;
+    transition: all 0.15s;
+    flex-shrink: 0;
+}
+
+.yrange-auto-btn:hover {
+    background: #e2e8f0;
+    color: #0f172a;
 }
 
 /* Small button variant */
@@ -491,17 +654,33 @@ h1 {
 
 /* Run button - green accent for go/play action */
 .results-header .btn {
+    border-radius: 6px;
+}
+
+#sim-cancel-btn {
+    background: #94a3b8;
+    border-color: #94a3b8;
+    color: #fff;
+}
+
+#sim-cancel-btn:hover {
+    background: #64748b;
+    border-color: #64748b;
+}
+
+#sim-run-btn {
     background: #10b981;
     border-color: #10b981;
     color: #fff;
 }
 
-.results-header .btn:hover {
+#sim-run-btn:hover {
     background: #059669;
     border-color: #059669;
 }
 
-.results-header .btn:disabled {
+#sim-run-btn:disabled,
+#sim-cancel-btn:disabled {
     background: #94a3b8;
     border-color: #94a3b8;
     cursor: not-allowed;
@@ -577,16 +756,16 @@ h1 {
 .component-list {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 4px 6px;
+    gap: 4px;
     overflow-y: auto;
     align-content: start;
     border: 1px solid #e5e5e5;
     border-radius: 8px;
-    padding: 8px;
+    padding: 6px;
 }
 
 .component-item {
-    padding: 6px 4px;
+    padding: 4px;
     background: #fff;
     border-radius: 6px;
     cursor: pointer;
@@ -614,10 +793,10 @@ h1 {
 }
 
 .component-item svg {
-    width: 56px;
-    height: 42px;
+    width: 42px;
+    height: 30px;
     flex-shrink: 0;
-    transform: scale(1.5);
+    transform: scale(1.2);
 }
 
 .component-item svg path,
@@ -652,7 +831,7 @@ h1 {
 }
 
 .component-item.tool-item .material-symbols-outlined {
-    font-size: 22px;
+    font-size: 18px;
     color: #333;
 }
 
@@ -1341,8 +1520,12 @@ canvas {
     border-radius: 10px;
     padding: 20px;
     width: min(420px, 92vw);
+    max-height: min(88vh, 960px);
     box-shadow: 0 20px 60px rgba(15, 23, 42, 0.25);
     border: 1px solid #e5e5e5;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
 }
 
 .modal-large {
@@ -1354,6 +1537,7 @@ canvas {
     align-items: center;
     justify-content: space-between;
     margin-bottom: 16px;
+    flex-shrink: 0;
 }
 
 .modal-header h3 {
@@ -1367,6 +1551,16 @@ canvas {
     display: flex;
     flex-direction: column;
     gap: 12px;
+    min-height: 0;
+    overflow: auto;
+}
+
+.modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 16px;
+    flex-shrink: 0;
 }
 
 .modal-field {
@@ -1439,6 +1633,53 @@ canvas {
 .runner-status.run-error {
     background: #fee2e2;
     color: #b91c1c;
+}
+
+.runner-status-detail {
+    font-size: 11px;
+    color: #64748b;
+    min-height: 14px;
+}
+
+.runner-progress {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.runner-progress.is-hidden {
+    display: none;
+}
+
+.runner-progress-track {
+    position: relative;
+    height: 6px;
+    border-radius: 999px;
+    overflow: hidden;
+    background: #e2e8f0;
+}
+
+.runner-progress-bar {
+    height: 100%;
+    width: 0;
+    border-radius: 999px;
+    background: linear-gradient(90deg, #f59e0b, #f97316);
+    transition: width 120ms linear;
+}
+
+.runner-progress.is-indeterminate .runner-progress-bar {
+    position: relative;
+    animation: runner-indeterminate 1.1s ease-in-out infinite;
+}
+
+.runner-progress-label {
+    font-size: 11px;
+    color: #475569;
+}
+
+@keyframes runner-indeterminate {
+    0% { transform: translateX(-120%); }
+    100% { transform: translateX(320%); }
 }
 
 .mode-select { background: #fff; color: #333; }
@@ -1563,6 +1804,7 @@ main {
 
 .netlist-output {
     min-height: 140px;
+    max-height: 100%;
     border: 1px solid #e5e5e5;
     border-radius: 6px;
     padding: 8px;
@@ -1571,6 +1813,7 @@ main {
     font-size: 13px;
     white-space: pre;
     overflow: auto;
+    min-width: 0;
 }
 
 /* ==================== Circuit Editor ==================== */
@@ -1674,7 +1917,7 @@ main {
     position: relative;
     background: #fdfdfd;
     overflow: hidden;
-    min-height: 350px;
+    min-height: 0;
     min-width: 0;
 }
 

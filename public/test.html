@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ngspice WASM Test</title>
+  <title>ngspice Library WASM Test</title>
   <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
   <style>
     * {
@@ -120,7 +120,7 @@
   </style>
 </head>
 <body>
-  <h1>⚡ ngspice WASM Test Bench</h1>
+  <h1>⚡ ngspice Library WASM Test Bench</h1>
   
   <div id="status" class="status ready">Ready to simulate</div>
   
@@ -135,10 +135,6 @@ R1 in out 1k
 C1 out 0 1u
 
 .tran 100u 20m
-.control
-run
-wrdata output.txt v(in) v(out)
-.endc
 .end
 </textarea>
       <div class="examples">
@@ -172,10 +168,6 @@ R1 in out 1k
 C1 out 0 1u
 
 .tran 100u 20m
-.control
-run
-wrdata output.txt v(in) v(out)
-.endc
 .end`,
 
       rlc: `RLC Resonant Circuit
@@ -187,10 +179,6 @@ L1 n1 out 10m
 C1 out 0 100n
 
 .tran 10u 10m
-.control
-run
-wrdata output.txt v(in) v(out)
-.endc
 .end`,
 
       diode: `Half-Wave Rectifier
@@ -204,10 +192,6 @@ C1 out 0 10u
 .model DMOD D(Is=1e-14 Rs=10 N=1.8)
 
 .tran 10u 5m
-.control
-run
-wrdata output.txt v(in) v(out)
-.endc
 .end`,
 
       opamp: `Inverting Op-Amp
@@ -224,10 +208,6 @@ R2 ni out 47k
 E1 out 0 0 ni 100000
 
 .tran 10u 3m
-.control
-run
-wrdata output.txt v(in) v(out)
-.endc
 .end`
     };
     
@@ -239,19 +219,8 @@ wrdata output.txt v(in) v(out)
     const statusEl = document.getElementById('status');
     const runBtn = document.getElementById('runBtn');
     
-    let spinitContent = null;
     let worker = null;
-    
-    // Load spinit file
-    fetch('spinit')
-      .then(r => r.text())
-      .then(text => {
-        spinitContent = text;
-        console.log('Loaded spinit');
-      })
-      .catch(err => {
-        console.warn('Could not load spinit:', err);
-      });
+    let requestId = 0;
     
     window.runSimulation = () => {
       const netlist = document.getElementById('netlist').value;
@@ -268,42 +237,44 @@ wrdata output.txt v(in) v(out)
         worker = null;
       }
       
-      // Create fresh worker
-      worker = new Worker('ngspice-worker.js');
+      // Create fresh shared-library worker
+      worker = new Worker('lib/ngspice-lib-worker.js');
       
       let outputBuffer = '';
+      const initRequestId = ++requestId;
+      const runRequestId = ++requestId;
       
       worker.onmessage = (e) => {
-        const { type, text, message, outputData, stdout, stderr, stack } = e.data;
+        const { type, message, outputData, stdout, stderr, stack, requestId: eventRequestId } = e.data;
         
         switch (type) {
           case 'ready':
-            // Worker is ready, send the simulation request
-            worker.postMessage({ 
-              type: 'run', 
-              netlist,
-              spinit: spinitContent
-            });
+            if (eventRequestId !== initRequestId) break;
+            worker.postMessage({ type: 'run', requestId: runRequestId, netlist });
             break;
             
           case 'status':
-            outputBuffer += `[status] ${text}\n`;
+            if (eventRequestId !== runRequestId && eventRequestId !== initRequestId) break;
+            outputBuffer += `[status] ${message}\n`;
             outputEl.textContent = outputBuffer;
             break;
             
           case 'stdout':
-            outputBuffer += text + '\n';
+            if (eventRequestId !== runRequestId) break;
+            outputBuffer += `${e.data.line || ''}\n`;
             outputEl.textContent = outputBuffer;
             outputEl.scrollTop = outputEl.scrollHeight;
             break;
             
           case 'stderr':
-            outputBuffer += `[stderr] ${text}\n`;
+            if (eventRequestId !== runRequestId) break;
+            outputBuffer += `[stderr] ${e.data.line || ''}\n`;
             outputEl.textContent = outputBuffer;
             outputEl.scrollTop = outputEl.scrollHeight;
             break;
             
-          case 'complete':
+          case 'done':
+            if (eventRequestId !== runRequestId) break;
             statusEl.className = 'status ready';
             statusEl.textContent = '✓ Simulation complete';
             runBtn.disabled = false;
@@ -317,10 +288,9 @@ wrdata output.txt v(in) v(out)
               outputEl.textContent = outputBuffer;
               plotResults(outputData);
             } else {
-              outputBuffer += '\n[Note] No output.txt file generated\n';
+              outputBuffer += '\n[Note] No plottable output data was generated\n';
               outputEl.textContent = outputBuffer;
-              // Try to parse stdout for .print output
-              if (stdout) {
+              if (stdout || stderr) {
                 tryParsePrintOutput(stdout);
               }
             }
@@ -331,6 +301,7 @@ wrdata output.txt v(in) v(out)
             break;
             
           case 'error':
+            if (eventRequestId !== runRequestId && eventRequestId !== initRequestId) break;
             statusEl.className = 'status error';
             statusEl.textContent = '✗ Simulation failed';
             runBtn.disabled = false;
@@ -358,6 +329,14 @@ wrdata output.txt v(in) v(out)
         worker.terminate();
         worker = null;
       };
+
+      worker.postMessage({
+        type: 'init',
+        requestId: initRequestId,
+        config: {
+          assetBaseUrl: './lib'
+        }
+      });
     };
     
     function tryParsePrintOutput(stdout) {
@@ -390,17 +369,40 @@ wrdata output.txt v(in) v(out)
       const time = [];
       const signals = {};
       
-      // Parse wrdata output format: time val1 val2 ...
+      // Parse wrdata output format. The library runtime may emit paired scale/value
+      // columns: time val1 time val2 ...
       lines.forEach((line) => {
         const parts = line.trim().split(/\s+/).map(parseFloat);
-        if (parts.length >= 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
-          time.push(parts[0]);
-          parts.slice(1).forEach((val, i) => {
+        if (parts.length < 2 || isNaN(parts[0])) {
+          return;
+        }
+
+        const evenIndexed = [];
+        for (let i = 0; i < parts.length; i += 2) {
+          evenIndexed.push(parts[i]);
+        }
+        const usePairedFormat = parts.length % 2 === 0 && evenIndexed.every(value => !isNaN(value) && Math.abs(value - evenIndexed[0]) <= 1e-12);
+
+        time.push(parts[0]);
+
+        if (usePairedFormat) {
+          for (let i = 0; i < parts.length / 2; i += 1) {
+            const val = parts[(i * 2) + 1];
+            if (isNaN(val)) continue;
             const sigName = i === 0 ? 'V(in)' : i === 1 ? 'V(out)' : `Signal ${i + 1}`;
             if (!signals[sigName]) signals[sigName] = [];
             signals[sigName].push(val);
-          });
+          }
+          return;
         }
+
+        parts.slice(1).forEach((val, i) => {
+          if (isNaN(val)) return;
+          const sigName = i === 0 ? 'V(in)' : i === 1 ? 'V(out)' : `Signal ${i + 1}`;
+          if (!signals[sigName]) signals[sigName] = [];
+          signals[sigName].push(val);
+        }
+        );
       });
       
       if (time.length === 0) {

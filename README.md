@@ -107,7 +107,7 @@ SpicePad is built with a clean, modular architecture:
 - **Frontend**: Vanilla JavaScript (ES6+)
 - **Build Tool**: Vite
 - **Plotting**: Plotly.js
-- **Simulation Engine**: ngspice (WebAssembly)
+- **Simulation Engine**: ngspice shared library (WebAssembly) loaded from `public/lib`
 - **Storage**: IndexedDB (via idb-keyval)
 - **Styling**: CSS3 with modern layout techniques
 
