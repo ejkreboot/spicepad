@@ -113,14 +113,15 @@
                 <span class="debug-toggle-track"></span>
                 <span>Debug</span>
               </label>
-              <button class="btn btn-secondary btn-small" id="sim-cancel-btn" title="Cancel Running Simulation">
-                <span class="material-symbols-outlined">stop</span>
-                Cancel
+              <span class="results-actions-divider"></span>
+              <button class="btn btn-icon" id="compare-analyses-btn" title="Compare analyses" disabled>
+                <span class="material-symbols-outlined">stacks</span>
               </button>
-              <button class="btn btn-secondary btn-small" id="sim-run-btn" title="Run Simulation (⌘↵)">
+              <button class="btn btn-icon btn-run" id="sim-run-btn" title="Run Simulation (⌘↵)">
                 <span class="material-symbols-outlined">play_arrow</span>
-                Run
-                <kbd class="kbd-hint">⌘↵</kbd>
+              </button>
+              <button class="btn btn-icon btn-cancel" id="sim-cancel-btn" title="Cancel Simulation" disabled>
+                <span class="material-symbols-outlined">cancel</span>
               </button>
             </div>
           </div>
@@ -354,6 +355,28 @@
       <div class="modal-footer">
         <button class="btn btn-secondary" id="subcircuit-cancel-btn" type="button">Cancel</button>
         <button class="btn btn-primary" id="subcircuit-create-btn" type="button">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="compare-modal" aria-hidden="true">
+    <div class="modal modal-large" role="dialog" aria-modal="true" aria-labelledby="compare-modal-title">
+      <div class="modal-header">
+        <h3 id="compare-modal-title">Compare Analyses</h3>
+        <div class="compare-modal-controls">
+          <select id="compare-group-select" class="compare-group-select" style="display: none;"></select>
+          <div id="compare-scale-toggle" class="plot-scale-toggle" style="display: none;">
+            <button class="scale-btn active" data-scale="db">dB</button>
+            <button class="scale-btn" data-scale="v">V</button>
+            <button class="scale-btn" data-scale="phase">Phase</button>
+          </div>
+          <button class="btn btn-secondary modal-close" type="button" aria-label="Close">Close</button>
+        </div>
+      </div>
+      <div class="modal-body">
+        <div id="compare-plot-area" class="compare-plot-area"></div>
+        <div id="compare-probe-legend" class="compare-probe-legend"></div>
+        <div id="compare-analysis-blocks" class="compare-analysis-blocks"></div>
       </div>
     </div>
   </div>

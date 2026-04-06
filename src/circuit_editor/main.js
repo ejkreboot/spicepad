@@ -157,6 +157,9 @@ class CircuitEditorApp {
         // Simulation modal
         this.simulationController.setupSimulationModal();
 
+        // Compare analyses modal
+        this.simulationController.setupCompareModal();
+
         // Ngspice runner
         this.simulationController.setupSimulationRunner();
         

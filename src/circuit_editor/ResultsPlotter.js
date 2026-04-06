@@ -377,7 +377,7 @@ export class ResultsPlotter {
             plot_bgcolor: '#f8fafc',
             font: { color: '#0f172a', size: 10 },
             xaxis: {
-                title: { text: 'Frequency (Hz)', font: { size: 11 } },
+                title: { text: 'Frequency (Hz)', font: { size: 11 }, standoff: 0 },
                 type: 'log',
                 gridcolor: '#e2e8f0',
                 zerolinecolor: '#e2e8f0',
@@ -395,9 +395,11 @@ export class ResultsPlotter {
                 mirror: true,
                 tickfont: { size: 9 }
             },
-            margin: { t: 20, r: 20, b: 45, l: 50 },
+            margin: { t: 20, r: 20, b: 70, l: 50 },
             legend: {
-                x: 1, xanchor: 'right', y: 1,
+                orientation: 'h',
+                x: 0.5, xanchor: 'center',
+                y: -0.22, yanchor: 'top',
                 bgcolor: 'rgba(255, 255, 255, 0.92)',
                 bordercolor: '#dbe2ea', borderwidth: 1,
                 font: { size: 10 }
@@ -484,7 +486,7 @@ export class ResultsPlotter {
             plot_bgcolor: '#f8fafc',
             font: { color: '#0f172a', size: 10 },
             xaxis: {
-                title: { text: xAxisTitle, font: { size: 11 } },
+                title: { text: xAxisTitle, font: { size: 11 }, standoff: 0 },
                 gridcolor: '#e2e8f0',
                 zerolinecolor: '#e2e8f0',
                 linecolor: '#cbd5e1',
@@ -501,9 +503,11 @@ export class ResultsPlotter {
                 mirror: true,
                 tickfont: { size: 9 }
             },
-            margin: { t: 20, r: 20, b: 45, l: 50 },
+            margin: { t: 20, r: 20, b: 70, l: 50 },
             legend: {
-                x: 1, xanchor: 'right', y: 1,
+                orientation: 'h',
+                x: 0.5, xanchor: 'center',
+                y: -0.22, yanchor: 'top',
                 bgcolor: 'rgba(255, 255, 255, 0.92)',
                 bordercolor: '#dbe2ea', borderwidth: 1,
                 font: { size: 10 }
@@ -706,7 +710,7 @@ export class ResultsPlotter {
             plot_bgcolor: '#f8fafc',
             font: { color: '#0f172a', size: 10 },
             xaxis: {
-                title: { text: `${xMeta.label} (${xUnit})`, font: { size: 11 } },
+                title: { text: `${xMeta.label} (${xUnit})`, font: { size: 11 }, standoff: 0 },
                 gridcolor: '#e2e8f0',
                 zerolinecolor: '#e2e8f0',
                 linecolor: '#cbd5e1',
@@ -745,5 +749,213 @@ export class ResultsPlotter {
         if (container) {
             this._setupYRangeControls(container, { hasDualAxis: false, y1Label: `${yMeta.label} (${yUnit})` });
         }
+    }
+
+    // ==================== Overlay Plotting ====================
+
+    static DASH_STYLES = ['solid', 'dash', 'dot', 'dashdot', 'longdash', 'longdashdot'];
+    static ANALYSIS_COLORS = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316'];
+
+    /**
+     * Render overlaid traces from multiple analyses onto a single Plotly chart.
+     * Color = per-analysis, dash style = per-probe. Plotly legend is disabled.
+     * Returns metadata for building custom legend + analysis blocks.
+     * @returns {{ probes: Array<{label: string, dash: string}>, analyses: Array<{label: string, color: string}> }}
+     */
+    plotOverlay(group, plotAreaEl, scale = 'db') {
+        if (!group || group.length === 0 || !plotAreaEl || !window.Plotly) return null;
+
+        const analysisType = group[0].analysis.type;
+
+        // Collect unique probe labels across all analyses to assign dash styles
+        const probeLabelSet = new Set();
+        for (const entry of group) {
+            const wantedSet = new Set((entry.runtimeSignals || []).map(s => s.toLowerCase()));
+            const filtered = this._filterVectors(entry.analysis.vectors, entry.probeInfo || [], wantedSet);
+            for (const f of filtered) probeLabelSet.add(f.label);
+        }
+        const probeLabels = [...probeLabelSet];
+        const probeDashMap = new Map();
+        probeLabels.forEach((label, i) => {
+            probeDashMap.set(label, ResultsPlotter.DASH_STYLES[i % ResultsPlotter.DASH_STYLES.length]);
+        });
+
+        // Build analysis color assignments
+        const analysisColors = group.map((entry, i) => ({
+            label: entry.label,
+            color: ResultsPlotter.ANALYSIS_COLORS[i % ResultsPlotter.ANALYSIS_COLORS.length]
+        }));
+
+        const traceMap = [];
+
+        if (analysisType === 'ac') {
+            this._plotOverlayAc(group, plotAreaEl, scale, probeDashMap, analysisColors, traceMap);
+        } else {
+            this._plotOverlaySweep(group, plotAreaEl, analysisType, probeDashMap, analysisColors, traceMap);
+        }
+
+        return {
+            probes: probeLabels.map(label => ({ label, dash: probeDashMap.get(label) })),
+            analyses: analysisColors,
+            traceMap
+        };
+    }
+
+    _plotOverlayAc(group, plotAreaEl, scale, probeDashMap, analysisColors, traceMap) {
+        const isPhase = scale === 'phase';
+        const isDb = scale === 'db';
+
+        let yTransform, yLabel;
+        if (isPhase) {
+            yTransform = (re, im) => Math.atan2(im, re) * (180 / Math.PI);
+            yLabel = 'Phase (°)';
+        } else if (isDb) {
+            yTransform = (re, im) => 20 * Math.log10(Math.max(Math.sqrt(re * re + im * im), 1e-12));
+            yLabel = 'Magnitude (dB)';
+        } else {
+            yTransform = (re, im) => Math.sqrt(re * re + im * im);
+            yLabel = 'Magnitude (V)';
+        }
+
+        const traces = [];
+
+        group.forEach((entry, ai) => {
+            const color = analysisColors[ai].color;
+            const analysis = entry.analysis;
+            const freqValues = Array.from(analysis.sweep.values);
+            const wantedSet = new Set((entry.runtimeSignals || []).map(s => s.toLowerCase()));
+            const filtered = this._filterVectors(analysis.vectors, entry.probeInfo || [], wantedSet);
+
+            filtered.forEach(f => {
+                const v = f.vector;
+                const yData = [];
+                for (let i = 0; i < v.real.length; i++) {
+                    yData.push(yTransform(v.real[i], v.imag ? v.imag[i] : 0));
+                }
+                traces.push({
+                    x: freqValues,
+                    y: yData,
+                    type: 'scatter',
+                    mode: 'lines',
+                    name: `${f.label} — ${entry.label}`,
+                    showlegend: false,
+                    line: { color, width: 2, dash: probeDashMap.get(f.label) || 'solid' }
+                });
+                traceMap.push({ probeLabel: f.label, analysisIndex: ai });
+            });
+        });
+
+        const layout = this._overlayLayout({
+            xTitle: 'Frequency (Hz)',
+            yTitle: yLabel,
+            xType: 'log'
+        });
+
+        requestAnimationFrame(() => {
+            layout.width = plotAreaEl.clientWidth || 680;
+            layout.height = plotAreaEl.clientHeight || 500;
+            try {
+                window.Plotly.newPlot(plotAreaEl, traces, layout, {
+                    responsive: true,
+                    modeBarButtonsToRemove: ['pan2d', 'zoomIn2d', 'zoomOut2d', 'autoScale2d']
+                });
+            } catch (err) {
+                console.error('[Overlay AC Plot] Plotly.newPlot error:', err);
+            }
+        });
+    }
+
+    _plotOverlaySweep(group, plotAreaEl, analysisType, probeDashMap, analysisColors, traceMap) {
+        const traces = [];
+        let hasVoltage = false;
+        let hasCurrent = false;
+
+        group.forEach((entry, ai) => {
+            const color = analysisColors[ai].color;
+            const analysis = entry.analysis;
+            const xValues = Array.from(analysis.sweep.values);
+            const wantedSet = new Set((entry.runtimeSignals || []).map(s => s.toLowerCase()));
+            const filtered = this._filterVectors(analysis.vectors, entry.probeInfo || [], wantedSet);
+
+            filtered.forEach(f => {
+                const isCurrent = f.type === 'current';
+                hasCurrent = hasCurrent || isCurrent;
+                hasVoltage = hasVoltage || !isCurrent;
+                traces.push({
+                    x: xValues,
+                    y: Array.from(f.vector.real),
+                    type: 'scatter',
+                    mode: 'lines',
+                    name: `${f.label} — ${entry.label}`,
+                    showlegend: false,
+                    yaxis: isCurrent ? 'y2' : 'y',
+                    line: { color, width: 2, dash: probeDashMap.get(f.label) || 'solid' }
+                });
+                traceMap.push({ probeLabel: f.label, analysisIndex: ai });
+            });
+        });
+
+        const xTitle = analysisType === 'dc' ? 'Voltage (V)' : 'Time (s)';
+        let yTitle = 'Voltage (V)';
+        if (hasCurrent && !hasVoltage) yTitle = 'Current (A)';
+
+        const layout = this._overlayLayout({ xTitle, yTitle });
+
+        if (hasCurrent && hasVoltage) {
+            layout.yaxis2 = {
+                title: { text: 'Current (A)', font: { size: 11 }, standoff: 20 },
+                overlaying: 'y',
+                side: 'right',
+                gridcolor: '#e2e8f0',
+                zerolinecolor: '#e2e8f0',
+                linecolor: '#cbd5e1',
+                linewidth: 1,
+                mirror: true,
+                tickfont: { size: 9 }
+            };
+            layout.margin.r = 60;
+        }
+
+        requestAnimationFrame(() => {
+            layout.width = plotAreaEl.clientWidth || 680;
+            layout.height = plotAreaEl.clientHeight || 500;
+            try {
+                window.Plotly.newPlot(plotAreaEl, traces, layout, {
+                    responsive: true,
+                    modeBarButtonsToRemove: ['pan2d', 'zoomIn2d', 'zoomOut2d', 'autoScale2d']
+                });
+            } catch (err) {
+                console.error('[Overlay Sweep Plot] Plotly.newPlot error:', err);
+            }
+        });
+    }
+
+    _overlayLayout({ xTitle, yTitle, xType = 'linear' }) {
+        return {
+            paper_bgcolor: '#ffffff',
+            plot_bgcolor: '#f8fafc',
+            font: { color: '#0f172a', size: 10 },
+            xaxis: {
+                title: { text: xTitle, font: { size: 11 }, standoff: 0 },
+                type: xType,
+                gridcolor: '#e2e8f0',
+                zerolinecolor: '#e2e8f0',
+                linecolor: '#cbd5e1',
+                linewidth: 1,
+                mirror: true,
+                tickfont: { size: 9 }
+            },
+            yaxis: {
+                title: { text: yTitle, font: { size: 11 } },
+                gridcolor: '#e2e8f0',
+                zerolinecolor: '#e2e8f0',
+                linecolor: '#cbd5e1',
+                linewidth: 1,
+                mirror: true,
+                tickfont: { size: 9 }
+            },
+            margin: { t: 20, r: 20, b: 40, l: 50 },
+            showlegend: false
+        };
     }
 }

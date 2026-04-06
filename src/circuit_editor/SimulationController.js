@@ -28,11 +28,13 @@ export class SimulationController {
         this._simulationCancelled = false;
         this._pendingSimJobs = null;
         this._simResults = [];
+        this._mergeableGroups = [];
+        this._compareModalOpen = false;
         this._modalOpen = false;
     }
 
     get isModalOpen() {
-        return this._modalOpen;
+        return this._modalOpen || this._compareModalOpen;
     }
 
     get isRunning() {
@@ -419,13 +421,316 @@ export class SimulationController {
         }
 
         this._setRunProgress('none');
-    }
 
+        // Detect mergeable analysis groups for overlay comparison
+        this._mergeableGroups = this._findMergeableGroups();
+        this._updateCompareButton();
+    }
     _formatProgressTimes(currentTime, finalTime) {
         if (!Number.isFinite(currentTime) || !Number.isFinite(finalTime) || finalTime <= 0) {
             return 'Running';
         }
         return `${currentTime.toExponential(3)} / ${finalTime.toExponential(3)} s`;
+    }
+
+    // ==================== Compare Analyses ====================
+
+    setupCompareModal() {
+        const compareBtn = document.getElementById('compare-analyses-btn');
+        compareBtn?.addEventListener('click', () => this._showCompareModal());
+
+        const modal = document.getElementById('compare-modal');
+        if (!modal) return;
+
+        const closeBtn = modal.querySelector('.modal-close');
+        closeBtn?.addEventListener('click', () => this._closeCompareModal());
+
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) this._closeCompareModal();
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && this._compareModalOpen) {
+                this._closeCompareModal();
+            }
+        });
+
+        const groupSelect = document.getElementById('compare-group-select');
+        groupSelect?.addEventListener('change', () => {
+            const idx = parseInt(groupSelect.value);
+            if (Number.isFinite(idx) && this._mergeableGroups[idx]) {
+                this._renderCompareGroup(idx);
+            }
+        });
+
+        const scaleButtons = document.querySelectorAll('#compare-scale-toggle .scale-btn');
+        scaleButtons.forEach(btn => {
+            btn.addEventListener('click', () => {
+                scaleButtons.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                const groupIdx = parseInt(groupSelect?.value || '0');
+                this._renderCompareGroup(groupIdx, btn.dataset.scale);
+            });
+        });
+    }
+
+    /**
+     * Derive a short label for an analysis from job label / directive text.
+     */
+    /**
+     * Split a job label (full directive text) into per-analysis segments.
+     * Each segment includes any setup lines (alter, let, etc.) leading up to the
+     * analysis command, plus the analysis command itself.
+     */
+    _splitJobLabelIntoSegments(jobLabel) {
+        if (!jobLabel) return [];
+        const raw = jobLabel.replace(/^\s*\./, '').trim();
+        if (!raw) return [];
+        const lines = raw.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+        const analysisRe = /^(ac|dc|tran|noise|disto|pz)\b/i;
+        const segments = [];
+        let pending = [];
+        for (const line of lines) {
+            if (analysisRe.test(line)) {
+                pending.push(line);
+                segments.push(pending.join('\n'));
+                pending = [];
+            } else {
+                pending.push(line);
+            }
+        }
+        // If there are trailing non-analysis lines, attach to last segment
+        if (pending.length > 0 && segments.length > 0) {
+            segments[segments.length - 1] += '\n' + pending.join('\n');
+        }
+        return segments;
+    }
+
+    _deriveAnalysisLabel(jobLabel, analysisIdx) {
+        const segments = this._splitJobLabelIntoSegments(jobLabel);
+        if (segments.length > 0 && analysisIdx < segments.length) {
+            return segments[analysisIdx];
+        }
+        if (!jobLabel) return `Analysis ${analysisIdx + 1}`;
+        let label = jobLabel.replace(/^\s*\./, '').trim();
+        return label || `Analysis ${analysisIdx + 1}`;
+    }
+
+    /**
+     * Find groups of analyses that can be overlaid (same type + identical sweep).
+     * Returns array of groups; each group is an array of entry objects.
+     */
+    _findMergeableGroups() {
+        const entries = [];
+
+        this._simResults.forEach((result, ri) => {
+            if (result.success === false || !result.analyses) return;
+
+            result.analyses.forEach((analysis, ai) => {
+                if (!analysis.sweep || !analysis.sweep.values || analysis.sweep.values.length === 0) return;
+                const type = analysis.type;
+                if (!type || type === 'op' || type === 'tf' || type === 'sens') return;
+
+                const sv = analysis.sweep.values;
+                const sweepStart = sv[0];
+                const sweepStop = sv[sv.length - 1];
+                const sweepLen = sv.length;
+
+                entries.push({
+                    resultIdx: ri,
+                    analysisIdx: ai,
+                    type,
+                    sweepStart,
+                    sweepStop,
+                    sweepLen,
+                    label: this._deriveAnalysisLabel(result.label, ai),
+                    analysis,
+                    probeInfo: result.probeInfo || [],
+                    runtimeSignals: result.runtimeSignals || []
+                });
+            });
+        });
+
+        // Group by composite key (type, sweepLen, sweepStart, sweepStop)
+        const groupMap = new Map();
+        for (const entry of entries) {
+            const key = `${entry.type}|${entry.sweepLen}|${entry.sweepStart}|${entry.sweepStop}`;
+            if (!groupMap.has(key)) groupMap.set(key, []);
+            groupMap.get(key).push(entry);
+        }
+
+        // Deduplicate labels within each group
+        const groups = [];
+        for (const members of groupMap.values()) {
+            if (members.length < 2) continue;
+            const seen = new Map();
+            for (const m of members) {
+                const count = (seen.get(m.label) || 0) + 1;
+                seen.set(m.label, count);
+                if (count > 1) m.label = `${m.label} (#${count})`;
+            }
+            groups.push(members);
+        }
+
+        return groups;
+    }
+
+    _updateCompareButton() {
+        const btn = document.getElementById('compare-analyses-btn');
+        if (!btn) return;
+        btn.disabled = this._mergeableGroups.length === 0;
+    }
+
+    _showCompareModal() {
+        if (this._mergeableGroups.length === 0) return;
+
+        const modal = document.getElementById('compare-modal');
+        if (!modal) return;
+
+        modal.classList.add('is-open');
+        modal.setAttribute('aria-hidden', 'false');
+        this._compareModalOpen = true;
+
+        // Populate group selector
+        const groupSelect = document.getElementById('compare-group-select');
+        if (groupSelect) {
+            groupSelect.innerHTML = '';
+            this._mergeableGroups.forEach((group, i) => {
+                const opt = document.createElement('option');
+                opt.value = i;
+                const type = group[0].type.toUpperCase();
+                opt.textContent = `${type} — ${group.length} analyses`;
+                groupSelect.appendChild(opt);
+            });
+            groupSelect.style.display = this._mergeableGroups.length > 1 ? '' : 'none';
+            groupSelect.value = '0';
+        }
+
+        this._renderCompareGroup(0);
+    }
+
+    _closeCompareModal() {
+        const modal = document.getElementById('compare-modal');
+        if (!modal) return;
+
+        const plotArea = document.getElementById('compare-plot-area');
+        if (plotArea && window.Plotly) {
+            try { window.Plotly.purge(plotArea); } catch (_) {}
+        }
+
+        modal.classList.remove('is-open');
+        modal.setAttribute('aria-hidden', 'true');
+        this._compareModalOpen = false;
+    }
+
+    _renderCompareGroup(groupIndex, scale) {
+        const group = this._mergeableGroups[groupIndex];
+        if (!group) return;
+
+        const plotArea = document.getElementById('compare-plot-area');
+        if (!plotArea) return;
+
+        // Show/hide AC scale toggle
+        const scaleToggle = document.getElementById('compare-scale-toggle');
+        if (scaleToggle) {
+            scaleToggle.style.display = group[0].type === 'ac' ? '' : 'none';
+        }
+
+        // Determine scale from active button if not provided
+        if (!scale && group[0].type === 'ac') {
+            const activeBtn = document.querySelector('#compare-scale-toggle .scale-btn.active');
+            scale = activeBtn?.dataset.scale || 'db';
+        }
+
+        const meta = this.resultsPlotter.plotOverlay(group, plotArea, scale);
+        if (!meta) return;
+
+        // Track checked states for visibility toggling
+        const checkedProbes = new Set(meta.probes.map(p => p.label));
+        const checkedAnalyses = new Set(meta.analyses.map((_, i) => i));
+
+        const updateVisibility = () => {
+            if (!window.Plotly) return;
+            const visibility = meta.traceMap.map(t =>
+                checkedProbes.has(t.probeLabel) && checkedAnalyses.has(t.analysisIndex)
+            );
+            window.Plotly.restyle(plotArea, { visible: visibility });
+        };
+
+        // Build custom probe legend with checkboxes
+        const legendEl = document.getElementById('compare-probe-legend');
+        if (legendEl) {
+            legendEl.innerHTML = '';
+            meta.probes.forEach(probe => {
+                const label = document.createElement('label');
+                label.className = 'compare-probe-legend-item';
+
+                const cb = document.createElement('input');
+                cb.type = 'checkbox';
+                cb.checked = true;
+                cb.addEventListener('change', () => {
+                    if (cb.checked) checkedProbes.add(probe.label);
+                    else checkedProbes.delete(probe.label);
+                    updateVisibility();
+                });
+
+                label.appendChild(cb);
+                label.insertAdjacentHTML('beforeend', this._dashSvg(probe.dash));
+                const text = document.createElement('span');
+                text.textContent = probe.label;
+                label.appendChild(text);
+                legendEl.appendChild(label);
+            });
+        }
+
+        // Build color-coded analysis blocks with checkboxes
+        const blocksEl = document.getElementById('compare-analysis-blocks');
+        if (blocksEl) {
+            blocksEl.innerHTML = '';
+            meta.analyses.forEach((a, i) => {
+                const block = document.createElement('label');
+                block.className = 'compare-analysis-block';
+                block.style.color = a.color;
+
+                const cb = document.createElement('input');
+                cb.type = 'checkbox';
+                cb.checked = true;
+                cb.addEventListener('change', () => {
+                    if (cb.checked) checkedAnalyses.add(i);
+                    else checkedAnalyses.delete(i);
+                    updateVisibility();
+                });
+
+                block.appendChild(cb);
+                const text = document.createElement('span');
+                text.textContent = a.label;
+                block.appendChild(text);
+                blocksEl.appendChild(block);
+            });
+        }
+    }
+
+    /**
+     * Generate an inline SVG showing a dash pattern for the probe legend.
+     */
+    _dashSvg(dash) {
+        const dashArrays = {
+            solid: '',
+            dash: '8,4',
+            dot: '2,4',
+            dashdot: '8,4,2,4',
+            longdash: '12,4',
+            longdashdot: '12,4,2,4'
+        };
+        const d = dashArrays[dash] || '';
+        const dashAttr = d ? ` stroke-dasharray="${d}"` : '';
+        return `<svg width="28" height="10" viewBox="0 0 28 10"><line x1="0" y1="5" x2="28" y2="5" stroke="#334155" stroke-width="2"${dashAttr}/></svg>`;
+    }
+
+    _escapeHtml(str) {
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
     }
 
     _setRunStatus(state, text, detail = '') {

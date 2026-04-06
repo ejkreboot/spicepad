@@ -206,8 +206,78 @@ h1 {
 .results-runner-actions {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     margin-left: auto;
+}
+
+.results-actions-divider {
+    width: 1px;
+    height: 18px;
+    background: #d1d5db;
+    flex-shrink: 0;
+}
+
+.btn-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border-radius: 6px;
+    border: 1px solid #d1d5db;
+    background: #fff;
+    color: #475569;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.btn-icon:hover:not(:disabled) {
+    background: #f1f5f9;
+    color: #0f172a;
+    border-color: #94a3b8;
+}
+
+.btn-icon:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.btn-icon .material-symbols-outlined {
+    font-size: 18px;
+}
+
+.btn-icon.btn-run {
+    background: #10b981;
+    border-color: #10b981;
+    color: #fff;
+}
+
+.btn-icon.btn-run:hover:not(:disabled) {
+    background: #059669;
+    border-color: #059669;
+}
+
+.btn-icon.btn-run:disabled {
+    background: #94a3b8;
+    border-color: #94a3b8;
+    opacity: 0.6;
+}
+
+.btn-icon.btn-cancel {
+    background: transparent;
+    border-color: transparent;
+    color: #94a3b8;
+}
+
+.btn-icon.btn-cancel:hover:not(:disabled) {
+    color: #ef4444;
+    background: #fef2f2;
+    border-color: #fca5a5;
+}
+
+.btn-icon.btn-cancel:disabled {
+    opacity: 0.35;
 }
 
 .results-status {
@@ -340,9 +410,10 @@ h1 {
 
 .plot-container {
     background: #fff;
-    border: 1px solid #e5e7eb;
     border-radius: 8px;
     overflow: hidden;
+    border: 0.5px solid #eee;
+    border-radius: 0px;
     flex-shrink: 0;
 }
 
@@ -425,6 +496,7 @@ h1 {
 .plot-container .plot-area {
     height: 260px;
     width: 100%;
+    border-width: 0px;
 }
 
 .plot-container .plot-area:has(.op-table) {
@@ -650,54 +722,6 @@ h1 {
 
 .btn-small .material-symbols-outlined {
     font-size: 16px;
-}
-
-/* Run button - green accent for go/play action */
-.results-header .btn {
-    border-radius: 6px;
-}
-
-#sim-cancel-btn {
-    background: #94a3b8;
-    border-color: #94a3b8;
-    color: #fff;
-}
-
-#sim-cancel-btn:hover {
-    background: #64748b;
-    border-color: #64748b;
-}
-
-#sim-run-btn {
-    background: #10b981;
-    border-color: #10b981;
-    color: #fff;
-}
-
-#sim-run-btn:hover {
-    background: #059669;
-    border-color: #059669;
-}
-
-#sim-run-btn:disabled,
-#sim-cancel-btn:disabled {
-    background: #94a3b8;
-    border-color: #94a3b8;
-    cursor: not-allowed;
-}
-
-/* Keyboard shortcut hint */
-.kbd-hint {
-    display: inline-flex;
-    align-items: center;
-    padding: 1px 5px;
-    margin-left: 4px;
-    font-size: 9px;
-    font-family: -apple-system, system-ui, sans-serif;
-    font-weight: 500;
-    background: rgba(255, 255, 255, 0.2);
-    border-radius: 3px;
-    opacity: 0.8;
 }
 
 .workspace-grid {
@@ -2081,4 +2105,115 @@ main {
     background: #fff;
     color: #ef4444;
     border-color: #ef4444;
+}
+
+/* ==================== Compare Analyses Modal ==================== */
+
+.compare-modal-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.compare-group-select {
+    padding: 5px 8px;
+    border-radius: 6px;
+    border: 1px solid #e2e8f0;
+    font-size: 12px;
+    color: #334155;
+    background: #fff;
+    cursor: pointer;
+}
+
+.compare-plot-area {
+    width: 100%;
+    height: 350px;
+    min-height: 280px;
+    overflow: hidden;
+    box-sizing: border-box;
+}
+
+#compare-modal .modal-body {
+    overflow-x: hidden;
+}
+
+#compare-modal .modal {
+    width: min(900px, 94vw);
+    min-height: 80vh;
+}
+
+.compare-probe-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 16px;
+    padding: 8px 12px;
+    border-top: 1px solid #e5e7eb;
+    background: #f8fafc;
+    border-radius: 0 0 6px 6px;
+}
+
+.compare-probe-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: #334155;
+    white-space: nowrap;
+    cursor: pointer;
+    user-select: none;
+}
+
+.compare-probe-legend-item input[type="checkbox"] {
+    width: 13px;
+    height: 13px;
+    margin: 0;
+    accent-color: #3b82f6;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.compare-probe-legend-item svg {
+    flex-shrink: 0;
+}
+
+.compare-analysis-blocks {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 8px 12px;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    background: #fafafa;
+    font-family: 'SF Mono', 'Monaco', 'Cascadia Code', 'Courier New', monospace;
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.compare-analysis-block {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 4px 8px;
+    border-left: 3px solid currentColor;
+    border-radius: 0 4px 4px 0;
+    background: #fff;
+    cursor: pointer;
+    user-select: none;
+}
+
+.compare-analysis-block input[type="checkbox"] {
+    width: 13px;
+    height: 13px;
+    margin: 2px 0 0 0;
+    accent-color: currentColor;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.compare-analysis-block span {
+    white-space: pre-wrap;
+    word-break: break-word;
 }
