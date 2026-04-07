@@ -24,6 +24,20 @@ body {
     overflow: hidden;
 }
 
+body.symbol-editor {
+    height: 100vh;
+    min-height: 600px;
+    overflow: hidden;
+}
+
+body.symbol-editor .container {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+}
+
 h1 {
     margin: 0 0 24px 0;
     font-size: 24px;
@@ -730,14 +744,13 @@ h1 {
 }
 
 .workspace-grid {
-    --workspace-top-height: 640px;
     display: grid;
-    grid-template-columns: 240px minmax(500px, 1fr);
-    grid-template-rows: var(--workspace-top-height) minmax(0, 1fr);
+    grid-template-columns: 240px minmax(400px, 1fr) 380px;
+    grid-template-rows: 1fr;
     gap: 20px;
     align-items: stretch;
     min-width: 0;
-    height: 100%;
+    flex: 1;
     min-height: 0;
 }
 
@@ -746,7 +759,6 @@ h1 {
     grid-row: 1;
     min-width: 0;
     min-height: 0;
-    height: var(--workspace-top-height);
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -755,7 +767,7 @@ h1 {
 .canvas-panel {
     grid-column: 2;
     grid-row: 1;
-    height: var(--workspace-top-height);
+    min-height: 0;
 }
 
 .panel {
@@ -1194,10 +1206,62 @@ canvas {
 .properties {
     display: flex;
     flex-direction: column;
-    gap: 15px;
-    overflow-y: auto;
+    gap: 0;
+    overflow-y: hidden;
     align-self: stretch;
     height: 100%;
+    grid-column: 3;
+    grid-row: 1;
+}
+
+/* Tab strip */
+.prop-tabs {
+    display: flex;
+    flex-shrink: 0;
+    gap: 0;
+    border-bottom: 2px solid #e5e5e5;
+    margin-bottom: 12px;
+}
+
+.prop-tab {
+    flex: 1;
+    padding: 7px 4px;
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+    font-size: 10px;
+    font-weight: 600;
+    color: #94a3b8;
+    text-transform: uppercase;
+    letter-spacing: 0.7px;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif;
+}
+
+.prop-tab:hover { color: #475569; }
+
+.prop-tab.active {
+    color: #3b82f6;
+    border-bottom-color: #3b82f6;
+}
+
+/* Tab panes */
+.prop-tab-pane {
+    display: none;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+}
+
+.prop-tab-pane.active { display: flex; flex-direction: column; gap: 12px; }
+
+/* Labels tab: stacked */
+.labels-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
 }
 
 .prop-group {
@@ -1235,6 +1299,7 @@ canvas {
 .prop-row input[type="number"],
 .prop-row select {
     flex: 1;
+    min-width: 0;
     padding: 6px 10px;
     border: 1px solid #e5e5e5;
     border-radius: 4px;
@@ -1494,6 +1559,7 @@ canvas {
 /* JSON output */
 .json-output {
     grid-column: 1 / span 2;
+    grid-row: 2;
     margin-top: 0;
     display: flex;
     flex-direction: column;

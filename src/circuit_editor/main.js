@@ -164,7 +164,10 @@ class CircuitEditorApp {
         this.simulationController.setupSimulationRunner();
         
         // Save/Load functionality
-        this.persistence.setupSaveLoad();
+        this.persistence.setupSaveLoad(() => ({
+            componentCounter: this._componentCounter,
+            designatorCounters: this._designatorCounters
+        }));
 
         // Library import/export
         this.libraryManager.setupLibraryImport();

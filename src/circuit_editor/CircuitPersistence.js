@@ -18,12 +18,15 @@ export class CircuitPersistence {
         this._autoSaveInterval = null;
     }
 
-    setupSaveLoad() {
+    setupSaveLoad(getCounters) {
         const saveBtn = document.getElementById('save-btn');
         const loadBtn = document.getElementById('load-btn');
         const fileInput = document.getElementById('file-input');
 
-        saveBtn?.addEventListener('click', () => this.saveToFile());
+        saveBtn?.addEventListener('click', () => {
+            const { componentCounter, designatorCounters } = getCounters();
+            this.saveToFile(componentCounter, designatorCounters);
+        });
         loadBtn?.addEventListener('click', () => fileInput?.click());
         fileInput?.addEventListener('change', (e) => this.loadFromFile(e));
     }
@@ -116,14 +119,35 @@ export class CircuitPersistence {
         return { componentCounter, designatorCounters };
     }
 
-    saveToFile(componentCounter, designatorCounters) {
+    async saveToFile(componentCounter, designatorCounters) {
         const data = this.serialize(componentCounter, designatorCounters);
         const json = JSON.stringify(data, null, 2);
+        const suggestedName = 'circuit.spicepad';
+
+        if (window.showSaveFilePicker) {
+            try {
+                const handle = await window.showSaveFilePicker({
+                    suggestedName,
+                    types: [{ description: 'SpicePad Circuit', accept: { 'application/json': ['.spicepad'] } }]
+                });
+                const writable = await handle.createWritable();
+                await writable.write(json);
+                await writable.close();
+                return;
+            } catch (e) {
+                if (e.name === 'AbortError') return;
+                // Fall through to fallback on unexpected errors
+            }
+        }
+
+        // Fallback: prompt for filename, then trigger download
+        const name = window.prompt('Save as:', suggestedName);
+        if (!name) return;
         const blob = new Blob([json], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = 'circuit.spicepad';
+        a.download = name;
         a.click();
         URL.revokeObjectURL(url);
     }

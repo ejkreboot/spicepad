@@ -11,7 +11,7 @@
     <link rel="stylesheet" href="./src/style.css">
 </head>
 
-<body>
+<body class="symbol-editor">
     <div class="page-header">
         <img src="/logo.webp" alt="SpicePad" class="header-logo">
         <a class="btn btn-nav" href="./index.html">
@@ -119,116 +119,131 @@
                 </div>
             </div>
 
-            <!-- JSON Output -->
-            <div class="panel json-output">
-                <h2>
-                    JSON Output
-                    <button class="btn btn-secondary" onclick="copyJSON()">Copy to Clipboard</button>
-                </h2>
-                <textarea id="jsonOutput" readonly></textarea>
-            </div>
-        </div>
-
         <!-- Right Panel: Properties -->
         <div class="panel properties">
-            <button class="btn btn-primary" onclick="updateComponent()" style="width: 100%; margin-bottom: 16px;">Save Component</button>
-            <div class="prop-group">
-                <h3>Component Info</h3>
-                <div class="prop-row">
-                    <label>ID:</label>
-                    <input type="text" id="compId" placeholder="resistor">
-                </div>
-                <div class="prop-row">
-                    <label>Name:</label>
-                    <input type="text" id="compName" placeholder="Resistor">
-                </div>
-                <div class="prop-row">
-                    <label>Type:</label>
-                    <div class="segmented">
-                        <label class="radio-inline"><input type="radio" name="compType" value="primitive" checked> Primitive</label>
-                        <label class="radio-inline"><input type="radio" name="compType" value="subcircuit"> Subcircuit</label>
+            <button class="btn btn-primary" onclick="updateComponent()" style="width: 100%; margin-bottom: 12px;">Save Component</button>
+
+            <!-- Tab strip -->
+            <div class="prop-tabs">
+                <button class="prop-tab active" data-tab="info">Info</button>
+                <button class="prop-tab" data-tab="models">Models</button>
+                <button class="prop-tab" data-tab="pins">Pins</button>
+                <button class="prop-tab" data-tab="labels">Labels</button>
+                <button class="prop-tab" data-tab="elements">Elements</button>
+            </div>
+
+            <!-- Info tab -->
+            <div class="prop-tab-pane active" id="tab-info">
+                <div class="prop-group">
+                    <h3>Component Info</h3>
+                    <div class="prop-row">
+                        <label>ID:</label>
+                        <input type="text" id="compId" placeholder="resistor">
                     </div>
-                </div>
-                <div class="prop-row" id="prefixRow">
-                    <label>Prefix:</label>
-                    <select id="compPrefix" style="width: 70px;"></select>
-                    <input type="checkbox" id="compAutoInc" checked>
-                    <label for="compAutoInc" style="min-width: auto;">Auto #</label>
-                </div>
-                <div class="prop-row subckt-row" id="subcktNameRow">
-                    <label>Subckt Name:</label>
-                    <input type="text" id="compSubcktName" placeholder="XFMR_DUAL">
-                </div>
-                <div class="prop-row subckt-row" id="subcktDefRow">
-                    <label>Definition:</label>
-                    <textarea id="compSubcktDefinition" rows="5" placeholder=".subckt XFMR_DUAL p1 p2 s1 s2\n...\n.ends"></textarea>
-                </div>
-                <div class="prop-row">
-                    <label>Default:</label>
-                    <input type="text" id="compDefault" placeholder="1k">
-                </div>
-                <div class="prop-row">
-                    <label>Width:</label>
-                    <input type="number" id="compWidth" value="80" min="20" max="200" onchange="resizeCanvas()">
-                </div>
-                <div class="prop-row">
-                    <label>Height:</label>
-                    <input type="number" id="compHeight" value="40" min="20" max="200" onchange="resizeCanvas()">
-                </div>
-            </div>
-
-            <div class="prop-group">
-                <h3>SPICE Models</h3>
-                <div class="model-list" id="modelList"></div>
-                <button class="btn btn-secondary small-btn" style="margin-top: 8px;" onclick="addModel()">+ Add Model</button>
-            </div>
-
-            <div class="prop-group">
-                <h3>Pins</h3>
-                <div class="pin-list" id="pinList"></div>
-                <button class="btn btn-secondary small-btn" style="margin-top: 8px;" onclick="addPinManual()">+ Add
-                    Pin</button>
-            </div>
-
-            <div class="prop-group">
-                <h3>Label Placement (0° / 180°)</h3>
-                <div class="prop-row">
-                    <label>Designator:</label>
-                    <div class="label-coords">
-                        <input type="number" id="designatorLabel0X" placeholder="x">
-                        <input type="number" id="designatorLabel0Y" placeholder="y">
+                    <div class="prop-row">
+                        <label>Name:</label>
+                        <input type="text" id="compName" placeholder="Resistor">
                     </div>
-                </div>
-                <div class="prop-row">
-                    <label>Value:</label>
-                    <div class="label-coords">
-                        <input type="number" id="valueLabel0X" placeholder="x">
-                        <input type="number" id="valueLabel0Y" placeholder="y">
+                    <div class="prop-row">
+                        <label>Type:</label>
+                        <div class="segmented">
+                            <label class="radio-inline"><input type="radio" name="compType" value="primitive" checked> Primitive</label><br>
+                            <label class="radio-inline"><input type="radio" name="compType" value="subcircuit"> Subcircuit</label>
+                        </div>
+                    </div>
+                    <div class="prop-row" id="prefixRow">
+                        <label>Prefix:</label>
+                        <select id="compPrefix" style="width: 70px;"></select>
+                        <input type="checkbox" id="compAutoInc" checked>
+                        <label for="compAutoInc" style="min-width: auto;">Auto #</label>
+                    </div>
+                    <div class="prop-row subckt-row" id="subcktNameRow">
+                        <label>Subckt Name:</label>
+                        <input type="text" id="compSubcktName" placeholder="XFMR_DUAL">
+                    </div>
+                    <div class="prop-row subckt-row" id="subcktDefRow">
+                        <label>Definition:</label>
+                        <textarea id="compSubcktDefinition" rows="5" placeholder=".subckt XFMR_DUAL p1 p2 s1 s2\n...\n.ends"></textarea>
+                    </div>
+                    <div class="prop-row">
+                        <label>Default:</label>
+                        <input type="text" id="compDefault" placeholder="1k">
+                    </div>
+                    <div class="prop-row">
+                        <label>Width:</label>
+                        <input type="number" id="compWidth" value="80" min="20" max="200" onchange="resizeCanvas()">
+                    </div>
+                    <div class="prop-row">
+                        <label>Height:</label>
+                        <input type="number" id="compHeight" value="40" min="20" max="200" onchange="resizeCanvas()">
                     </div>
                 </div>
             </div>
 
-            <div class="prop-group">
-                <h3>Label Placement (90° / 270°)</h3>
-                <div class="prop-row">
-                    <label>Designator:</label>
-                    <div class="label-coords">
-                        <input type="number" id="designatorLabel90X" placeholder="x">
-                        <input type="number" id="designatorLabel90Y" placeholder="y">
-                    </div>
+            <!-- Models tab -->
+            <div class="prop-tab-pane" id="tab-models">
+                <div class="prop-group">
+                    <h3>SPICE Models</h3>
+                    <div class="model-list" id="modelList"></div>
+                    <button class="btn btn-secondary small-btn" style="margin-top: 8px;" onclick="addModel()">+ Add Model</button>
                 </div>
-                <div class="prop-row">
-                    <label>Value:</label>
-                    <div class="label-coords">
-                        <input type="number" id="valueLabel90X" placeholder="x">
-                        <input type="number" id="valueLabel90Y" placeholder="y">
+            </div>
+
+            <!-- Pins tab -->
+            <div class="prop-tab-pane" id="tab-pins">
+                <div class="prop-group">
+                    <h3>Pins</h3>
+                    <div class="pin-list" id="pinList"></div>
+                    <button class="btn btn-secondary small-btn" style="margin-top: 8px;" onclick="addPinManual()">+ Add Pin</button>
+                </div>
+            </div>
+
+            <!-- Labels tab -->
+            <div class="prop-tab-pane" id="tab-labels">
+                <div class="labels-grid">
+                    <div class="prop-group">
+                        <h3>0° / 180°</h3>
+                        <div class="prop-row">
+                            <label>Designator:</label>
+                            <div class="label-coords">
+                                <input type="number" id="designatorLabel0X" placeholder="x">
+                                <input type="number" id="designatorLabel0Y" placeholder="y">
+                            </div>
+                        </div>
+                        <div class="prop-row">
+                            <label>Value:</label>
+                            <div class="label-coords">
+                                <input type="number" id="valueLabel0X" placeholder="x">
+                                <input type="number" id="valueLabel0Y" placeholder="y">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="prop-group">
+                        <h3>90° / 270°</h3>
+                        <div class="prop-row">
+                            <label>Designator:</label>
+                            <div class="label-coords">
+                                <input type="number" id="designatorLabel90X" placeholder="x">
+                                <input type="number" id="designatorLabel90Y" placeholder="y">
+                            </div>
+                        </div>
+                        <div class="prop-row">
+                            <label>Value:</label>
+                            <div class="label-coords">
+                                <input type="number" id="valueLabel90X" placeholder="x">
+                                <input type="number" id="valueLabel90Y" placeholder="y">
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
 
-            <div class="prop-group">
-                <h3>Drawing Elements</h3>
-                <div class="element-list" id="elementList"></div>
+            <!-- Elements tab -->
+            <div class="prop-tab-pane" id="tab-elements">
+                <div class="prop-group">
+                    <h3>Drawing Elements</h3>
+                    <div class="element-list" id="elementList"></div>
+                </div>
             </div>
         </div>
     </div>
@@ -236,6 +251,16 @@
 
 
         <script type="module" src="./src/symbol_editor/main.js"></script>
+        <script>
+            document.querySelectorAll('.prop-tab').forEach(function(btn) {
+                btn.addEventListener('click', function() {
+                    document.querySelectorAll('.prop-tab').forEach(function(b) { b.classList.remove('active'); });
+                    document.querySelectorAll('.prop-tab-pane').forEach(function(p) { p.classList.remove('active'); });
+                    btn.classList.add('active');
+                    document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+                });
+            });
+        </script>
 
 </body>
 
