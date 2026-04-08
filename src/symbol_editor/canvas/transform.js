@@ -103,31 +103,20 @@ export function getComponentPosition(event, options = {}) {
 export function createPreviewTransform(width, height, angle, canvasWidth, canvasHeight, extraPoints = []) {
     if (!width || !height || !canvasWidth || !canvasHeight) return null;
 
-    const bounds = getRotatedBounds(width, height, angle, extraPoints);
-    
-    // Expand bounds by 25% in each direction (results in 150% total size)
-    const expandX = bounds.width * 0.25;
-    const expandY = bounds.height * 0.25;
-    const expandedBounds = {
-        minX: bounds.minX - expandX,
-        minY: bounds.minY - expandY,
-        maxX: bounds.maxX + expandX,
-        maxY: bounds.maxY + expandY,
-        width: bounds.width + expandX * 2,
-        height: bounds.height + expandY * 2,
-    };
-    
-    const padding = 12;
-    const usableWidth = Math.max(canvasWidth - padding * 2, 10);
-    const usableHeight = Math.max(canvasHeight - padding * 2, 10);
-    const scale = Math.min(
-        usableWidth / (expandedBounds.width || 1),
-        usableHeight / (expandedBounds.height || 1)
-    );
-    const offsetX = (canvasWidth - expandedBounds.width * scale) / 2;
-    const offsetY = (canvasHeight - expandedBounds.height * scale) / 2;
+    // Use symbol-only bounds (no labels) so the view stays fixed while labels are moved
+    const bounds = getRotatedBounds(width, height, angle, []);
 
-    return { angle, width, height, bounds: expandedBounds, scale, offsetX, offsetY };
+    // Fix the view at 4x the wider axis-aligned dimension, consistent across both orientations
+    const refDimension = 4 * Math.max(width, height);
+    const scale = Math.min(
+        canvasWidth / refDimension,
+        canvasHeight / refDimension
+    );
+
+    const offsetX = (canvasWidth - bounds.width * scale) / 2 - bounds.minX * scale;
+    const offsetY = (canvasHeight - bounds.height * scale) / 2 - bounds.minY * scale;
+
+    return { angle, width, height, bounds, scale, offsetX, offsetY };
 }
 
 /**

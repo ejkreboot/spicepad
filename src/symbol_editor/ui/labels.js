@@ -150,34 +150,19 @@ function drawLabelPreview(preview, labels, compWidth, compHeight) {
     const angle = orientation === 90 ? Math.PI / 2 : 0;
     const designator = orientation === 0 ? labels.designator[0] : labels.designator[1];
     const value = orientation === 0 ? labels.value[0] : labels.value[1];
-    const extraPoints = [designator, value]
-        .filter(Boolean)
-        .map(point => ({ point, rotate: false }));
-    
-    // Lock transform during drag to prevent viewport from chasing the cursor
-    const dragState = getLabelDragState();
-    const isDragging = dragState && dragState.preview === preview;
-    let transform;
-    
-    if (isDragging && preview.lockedTransform) {
-        // Use locked transform during drag
-        transform = preview.lockedTransform;
-    } else {
-        // Create new transform when not dragging
-        transform = createPreviewTransform(
-            compWidth,
-            compHeight,
-            angle,
-            canvas.width,
-            canvas.height,
-            extraPoints
-        );
-        if (!transform) {
-            preview.transform = null;
-            preview.lockedTransform = null;
-            preview.markerTargets = [];
-            return;
-        }
+
+    const transform = createPreviewTransform(
+        compWidth,
+        compHeight,
+        angle,
+        canvas.width,
+        canvas.height
+    );
+    if (!transform) {
+        preview.transform = null;
+        preview.lockedTransform = null;
+        preview.markerTargets = [];
+        return;
     }
 
     preview.transform = transform;

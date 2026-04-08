@@ -616,16 +616,12 @@ import { getDefaultComponents } from '../common/defaultComponents.js';
             const angle = orientation === 90 ? Math.PI / 2 : 0;
             const designator = orientation === 0 ? labels.designator[0] : labels.designator[1];
             const value = orientation === 0 ? labels.value[0] : labels.value[1];
-            const extraPoints = [designator, value]
-                .filter(Boolean)
-                .map(point => ({ point, rotate: false }));
             const transform = createPreviewTransform(
                 compWidth,
                 compHeight,
                 angle,
                 canvas.width,
-                canvas.height,
-                extraPoints
+                canvas.height
             );
             if (!transform) {
                 preview.transform = null;
@@ -887,16 +883,16 @@ import { getDefaultComponents } from '../common/defaultComponents.js';
 
         function createPreviewTransform(width, height, angle, canvasWidth, canvasHeight, extraPoints = []) {
             if (!width || !height || !canvasWidth || !canvasHeight) return null;
-            const bounds = getRotatedBounds(width, height, angle, extraPoints);
-            const padding = 12;
-            const usableWidth = Math.max(canvasWidth - padding * 2, 10);
-            const usableHeight = Math.max(canvasHeight - padding * 2, 10);
+            // Use symbol-only bounds (no labels) so the view stays fixed while labels are moved
+            const bounds = getRotatedBounds(width, height, angle, []);
+            // Fix the view at 4x the wider axis-aligned dimension, consistent across both orientations
+            const refDimension = 4 * Math.max(width, height);
             const scale = Math.min(
-                usableWidth / (bounds.width || 1),
-                usableHeight / (bounds.height || 1)
+                canvasWidth / refDimension,
+                canvasHeight / refDimension
             );
-            const offsetX = (canvasWidth - bounds.width * scale) / 2;
-            const offsetY = (canvasHeight - bounds.height * scale) / 2;
+            const offsetX = (canvasWidth - bounds.width * scale) / 2 - bounds.minX * scale;
+            const offsetY = (canvasHeight - bounds.height * scale) / 2 - bounds.minY * scale;
             return { angle, width, height, bounds, scale, offsetX, offsetY };
         }
 
