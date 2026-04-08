@@ -931,6 +931,29 @@ h1 {
 
 .btn .material-symbols-outlined { font-size: 18px; }
 
+.btn .probe-btn-icon {
+    height: 22px;
+    width: auto;
+    display: block;
+}
+
+.tool-btn[data-tool="probe"] {
+    padding: 7px 12px;
+}
+
+.tool-btn[data-tool="select"],
+.tool-btn[data-tool="probe"],
+.tool-btn[data-tool="delete"] {
+    width: 36px;
+    height: 36px;
+    min-width: 36px;
+    min-height: 36px;
+    max-width: 36px;
+    max-height: 36px;
+    padding: 0;
+    box-sizing: border-box;
+}
+
 .btn-icon {
     padding: 8px;
     min-width: 36px;
@@ -1081,6 +1104,11 @@ h1 {
     background: #fff;
     color: #222;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif;
+}
+
+#clear-btn, #load-btn, #save-btn, #netlist-btn {
+    width: 90px;
+    justify-content: center;
 }
 
 .zoom-indicator {

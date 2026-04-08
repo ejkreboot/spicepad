@@ -38,11 +38,20 @@
           <div class="circuit-toolbar">
             <button class="btn btn-secondary tool-btn" data-tool="select" title="Select Tool (S)">
               <span class="material-symbols-outlined">arrow_selector_tool</span>
-              Select
             </button>
             <button class="btn btn-secondary tool-btn" data-tool="probe" title="Probe Tool (P)">
-              <span class="material-symbols-outlined">sensors</span>
-              Probe
+              <svg class="probe-btn-icon" xmlns="http://www.w3.org/2000/svg" viewBox="-8 -2 40 52">
+                <g transform="rotate(330, 12, 24)">
+                  <path d="M7 6 L7 12.25 L17 12.25 L17 6 Q17 0 12 0 Q7 0 7 6 Z" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+                  <rect x="2.5" y="7.75" width="19" height="4.5" rx="2.25" fill="currentColor"/>
+                  <path d="M7,12.25 L7,18 M17,12.25 L17,18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+                  <path d="M7,18 C7,21 10,23 10,24 M17,18 C17,21 14,23 14,24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+                  <path d="M10,24 L10,39.5 M14,24 L14,39.5" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+                  <polyline points="10,39.5 12,41 14,39.5" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+                  <line x1="12" y1="41" x2="12" y2="44" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+                  <circle cx="12" cy="46" r="2" fill="currentColor"/>
+                </g>
+              </svg>
             </button>
             <!-- Probe Type Selector (shown when probe tool is active) -->
             <div class="probe-type-selector" id="probe-type-selector" style="display: none;">
@@ -56,31 +65,24 @@
               </button>
             </div>
             <button class="btn btn-secondary tool-btn" data-tool="delete" title="Delete Tool (D)">
-              <span class="material-symbols-outlined">delete_forever</span>
-              Delete
+              <span class="material-symbols-outlined">close</span>
             </button>
             <div class="separator"></div>
-            <button class="btn btn-primary" id="netlist-btn" title="View Netlist">
-              <span class="material-symbols-outlined">code</span>
-              Netlist
+            <button class="btn btn-secondary" id="clear-btn" title="New Circuit">
+              <span class="material-symbols-outlined">new_window</span>
+              New
             </button>
-            <button class="btn btn-secondary" id="simulation-btn" title="Simulation Settings">
-              <span class="material-symbols-outlined">trending_up</span>
-              Simulation
+            <button class="btn btn-secondary" id="load-btn" title="Open Circuit">
+              <span class="material-symbols-outlined">folder_open</span>
+              Open
             </button>
-            <div class="separator"></div>
             <button class="btn btn-secondary" id="save-btn" title="Save Circuit">
               <span class="material-symbols-outlined">save</span>
               Save
             </button>
-            <button class="btn btn-secondary" id="load-btn" title="Load Circuit">
-              <span class="material-symbols-outlined">folder_open</span>
-              Load
-            </button>
-            <div class="separator"></div>
-            <button class="btn btn-secondary" id="clear-btn" title="Clear All">
-              <span class="material-symbols-outlined">delete</span>
-              Clear
+            <button class="btn btn-secondary" id="netlist-btn" title="View Netlist">
+              <span class="material-symbols-outlined">code</span>
+              Netlist
             </button>
             <div class="separator"></div>
             <span class="zoom-indicator" id="zoom-indicator">100%</span>

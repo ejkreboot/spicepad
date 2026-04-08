@@ -89,10 +89,15 @@ class CircuitEditorApp {
             onSelectionChange: (componentId) => {
                 this.selectionManager?.clearSelection();
                 this.probeManager.selectedProbeId = null;
+                if (this._currentTool === 'delete') {
+                    this._setTool('select');
+                    this._updateToolButtons('select');
+                }
             },
             onToolChange: (tool) => {
-                this._setTool(tool);
-                this._updateToolButtons(tool);
+                const effectiveTool = this._currentTool === 'delete' ? 'select' : tool;
+                this._setTool(effectiveTool);
+                this._updateToolButtons(effectiveTool);
             }
         });
 
@@ -243,21 +248,29 @@ class CircuitEditorApp {
             };
         }
         
-        // Clear button
+        // New (clear) button
         const clearBtn = document.getElementById('clear-btn');
         if (clearBtn) {
-            clearBtn.addEventListener('click', () => {
-                if (confirm('Clear all components and wires?')) {
-                    this.wireEditor.clear();
-                    this.componentManager.components = [];
-                    this.componentManager.pinNodeIdsByComponent.clear();
-                    this.probeManager.clear();
-                    this.textManager.clear();
-                    this._componentCounter = 1;
-                    this._designatorCounters.clear();
-                    this._saveToLocalStorage();
-                    this.viewport.render();
+            clearBtn.addEventListener('click', async () => {
+                const answer = confirm('Save the current circuit before creating a new one?');
+                if (answer) {
+                    await this.persistence.saveToFile(this._componentCounter, this._designatorCounters);
                 }
+                this.wireEditor.clear();
+                this.componentManager.components = [];
+                this.componentManager.pinNodeIdsByComponent.clear();
+                this.probeManager.clear();
+                this.textManager.clear();
+                this._componentCounter = 1;
+                this._designatorCounters.clear();
+                // Clear simulation directives
+                const simTA = document.getElementById('simulation-preview');
+                if (simTA) simTA.value = '';
+                this.simulationController.updateSimulationBadge();
+                // Clear simulation results
+                this.resultsPlotter.clearPlot();
+                this._saveToLocalStorage();
+                this.viewport.render();
             });
         }
         
