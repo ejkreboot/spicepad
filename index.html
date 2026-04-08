@@ -166,7 +166,6 @@
           <button class="sim-tab" data-tab="ac">AC Analysis</button>
           <button class="sim-tab" data-tab="tran">Transient</button>
           <button class="sim-tab" data-tab="op">Operating Point</button>
-          <button class="sim-tab" data-tab="custom">Custom</button>
         </div>
 
         <div class="sim-content">
@@ -253,16 +252,6 @@
             <button class="btn btn-primary" id="add-op-btn">Add Operating Point</button>
           </div>
 
-          <!-- Custom -->
-          <div class="sim-panel" data-panel="custom">
-            <div class="modal-field">
-              <label for="custom-directive">Custom SPICE Directives</label>
-              <textarea id="custom-directive" rows="6" placeholder=".param Vcc=5\n.temp 27\n.include mymodel.lib" style="font-family: 'Courier New', monospace; font-size: 13px; padding: 8px; border: 1px solid #e5e5e5; border-radius: 6px; resize: vertical;"></textarea>
-            </div>
-            <button class="btn btn-primary" id="add-custom-btn">Add Custom Directives</button>
-          </div>
-        </div>
-
         <div class="sim-preview-section">
           <h4 style="font-size: 13px; font-weight: 600; margin: 16px 0 8px 0; color: #475569;">Commands</h4>
           <div style="font-family: 'Courier New', monospace; font-size: 12px; color: #94a3b8;">.control</div>
@@ -329,6 +318,36 @@
       <div class="modal-footer">
         <button class="btn btn-secondary" id="component-cancel-btn" type="button">Cancel</button>
         <button class="btn btn-primary" id="component-save-btn" type="button">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="probe-modal" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="probe-modal-title">
+      <div class="modal-header">
+        <h3 id="probe-modal-title">Edit Probe</h3>
+        <button class="btn btn-secondary modal-close" type="button" aria-label="Close">Close</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-field">
+          <label for="probe-label-input">Probe Name</label>
+          <input type="text" id="probe-label-input" placeholder="Probe1" />
+        </div>
+        <div class="modal-field">
+          <label for="probe-type-select">Probe Type</label>
+          <select id="probe-type-select">
+            <option value="voltage">Voltage</option>
+            <option value="current">Current</option>
+          </select>
+        </div>
+        <div class="modal-field">
+          <label for="probe-color-input">Probe Color</label>
+          <input type="color" id="probe-color-input" value="#3b82f6" />
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="probe-modal-cancel" type="button">Cancel</button>
+        <button class="btn btn-primary" id="probe-modal-save" type="button">Save</button>
       </div>
     </div>
   </div>

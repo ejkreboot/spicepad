@@ -781,10 +781,17 @@ export class ResultsPlotter {
         });
 
         // Build analysis color assignments
-        const analysisColors = group.map((entry, i) => ({
-            label: entry.label,
-            color: ResultsPlotter.ANALYSIS_COLORS[i % ResultsPlotter.ANALYSIS_COLORS.length]
-        }));
+        const analysisColors = group.map((entry, i) => {
+            const lbl = entry.label || {};
+            return {
+                text: typeof lbl === 'string' ? lbl : (lbl.text || ''),
+                iteration: lbl.iteration,
+                iterationCount: lbl.iterationCount,
+                loopVar: lbl.loopVar,
+                loopValue: lbl.loopValue,
+                color: ResultsPlotter.ANALYSIS_COLORS[i % ResultsPlotter.ANALYSIS_COLORS.length]
+            };
+        });
 
         const traceMap = [];
 
@@ -837,7 +844,7 @@ export class ResultsPlotter {
                     y: yData,
                     type: 'scatter',
                     mode: 'lines',
-                    name: `${f.label} — ${entry.label}`,
+                    name: `${f.label} — ${entry.label?.text || entry.label}`,
                     showlegend: false,
                     line: { color, width: 2, dash: probeDashMap.get(f.label) || 'solid' }
                 });
@@ -886,7 +893,7 @@ export class ResultsPlotter {
                     y: Array.from(f.vector.real),
                     type: 'scatter',
                     mode: 'lines',
-                    name: `${f.label} — ${entry.label}`,
+                    name: `${f.label} — ${entry.label?.text || entry.label}`,
                     showlegend: false,
                     yaxis: isCurrent ? 'y2' : 'y',
                     line: { color, width: 2, dash: probeDashMap.get(f.label) || 'solid' }
