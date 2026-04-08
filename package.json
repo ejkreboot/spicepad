@@ -12,6 +12,7 @@
     "idb-keyval": "^6.2.1"
   },
   "devDependencies": {
-    "vite": "^7.2.4"
+    "vite": "^7.2.4",
+    "vite-plugin-html": "^3.2.2"
   }
 }

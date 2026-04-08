@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" href="/favicon.ico" type="image/x-icon">
+  <title><%- title %> - SpicePad Docs</title>
+  <link rel="stylesheet" href="/docs/style.css">
+</head>
+<body>
+  <%- header %>
+
+  <div class="docs-layout">
+    <%- nav %>
+
+    <main class="docs-content">
+      <h1>Getting Started</h1>
+      <p>This guide covers the basics of the SpicePad circuit editor — placing components, drawing wires, adding text, and managing your schematic.</p>
+
+      <h2>The Toolbar</h2>
+      <img src="/docs/getting_started/top_bar.png" alt="SpicePad toolbar" class="docs-img">
+      <p>The toolbar across the top of the editor gives you access to the main tools and actions:</p>
+      <table class="docs-table">
+        <thead>
+          <tr><th>Button</th><th>Shortcut</th><th>Description</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Select</td><td><kbd>S</kbd></td><td>Default mode. Click to select components and wires, or drag to marquee-select multiple items.</td></tr>
+          <tr><td>Probe</td><td><kbd>P</kbd></td><td>Place voltage or current probes on wires for simulation.</td></tr>
+          <tr><td>Delete</td><td><kbd>D</kbd></td><td>Click any component, wire, probe, or text to remove it.</td></tr>
+          <tr><td>New</td><td></td><td>Clear the canvas and start a new circuit.</td></tr>
+          <tr><td>Open</td><td></td><td>Load a previously saved circuit file.</td></tr>
+          <tr><td>Save</td><td></td><td>Save the current circuit to a file.</td></tr>
+          <tr><td>Netlist</td><td></td><td>View or export the SPICE netlist for the circuit.</td></tr>
+        </tbody>
+      </table>
+      <p>Wire mode (<kbd>W</kbd>) and Text mode (<kbd>T</kbd>) are activated with keyboard shortcuts rather than toolbar buttons.</p>
+
+      <h2>The Component Panel</h2>
+      <img src="/docs/getting_started/components.png" alt="Component panel" class="docs-img docs-img-sm">
+      <p>The left sidebar lists all available components. The first two tiles — <strong>Wire</strong> and <strong>Text</strong> — are special tools for drawing wires and placing text annotations. The remaining tiles are circuit components (resistors, capacitors, voltage sources, etc.).</p>
+      <p>To place a component:</p>
+      <ol>
+        <li>Click a component in the panel to select it. A ghost preview will follow your cursor.</li>
+        <li>Press <kbd>R</kbd> to rotate the preview before placing.</li>
+        <li>Click on the canvas to place the component. It will snap to the grid automatically.</li>
+      </ol>
+      <p>Each component is auto-assigned a designator (R1, C1, V1, etc.) and a default value. Double-click any placed component to open the editor and change its designator, value, or SPICE model.</p>
+
+      <h2>Wires &amp; Text</h2>
+      <h3>Drawing Wires</h3>
+      <p>Press <kbd>W</kbd> or click the Wire tile in the component panel to enter wire mode.</p>
+      <ol>
+        <li>Click to start a wire. Clicking on an existing wire splits it and starts a new connection from that point.</li>
+        <li>Move the mouse to route the wire — wires are drawn with orthogonal (L-shaped) bends that follow your cursor direction.</li>
+        <li>Click to place intermediate waypoints.</li>
+        <li>Double-click or press <kbd>Escape</kbd> to finish the wire.</li>
+      </ol>
+      <p>Junctions are created automatically where wires cross or connect.</p>
+
+      <h3>Adding Text</h3>
+      <p>Press <kbd>T</kbd> or click the Text tile to enter text mode, then click on the canvas to place a text cursor. Type your annotation and press <kbd>Enter</kbd> to confirm, or <kbd>Escape</kbd> to cancel. Click on existing text in text mode to edit it in place.</p>
+
+      <h2>Dragging Components &amp; Labels</h2>
+      <p>In Select mode (<kbd>S</kbd>), click and drag any component to reposition it. Wires connected to its pins will stretch to stay connected.</p>
+      <p>You can also drag wire nodes and segments to reshape your routing.</p>
+      <p>To select multiple items, click and drag from empty space to draw a selection rectangle. All enclosed components and wires are selected and can be moved together as a group.</p>
+      <p>Component labels (designator and value) can be dragged independently to reposition them around the component.</p>
+
+      <h2>Deleting Components</h2>
+      <p>There are two ways to delete items:</p>
+      <ul>
+        <li><strong>Delete tool</strong> — press <kbd>D</kbd> or click the delete button in the toolbar, then click the item you want to remove.</li>
+        <li><strong>Selection delete</strong> — in Select mode, select one or more items, then press <kbd>Delete</kbd> or <kbd>Backspace</kbd>.</li>
+      </ul>
+      <p>When you delete a component or wire, any orphaned wire nodes are automatically cleaned up.</p>
+
+      <h2>Putting It All Together</h2>
+      <img src="/docs/getting_started/simple_circuit.png" alt="Example circuit — low pass filter" class="docs-img">
+      <p>The screenshot above shows a simple low-pass filter built with SpicePad. Components are wired together, labels are positioned for readability, and a title is added with the text tool.</p>
+
+      <h2>Keyboard Shortcuts Reference</h2>
+      <table class="docs-table">
+        <thead>
+          <tr><th>Shortcut</th><th>Action</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><kbd>S</kbd></td><td>Select mode</td></tr>
+          <tr><td><kbd>W</kbd></td><td>Wire mode</td></tr>
+          <tr><td><kbd>T</kbd></td><td>Text mode</td></tr>
+          <tr><td><kbd>D</kbd></td><td>Delete mode</td></tr>
+          <tr><td><kbd>P</kbd></td><td>Probe mode</td></tr>
+          <tr><td><kbd>R</kbd></td><td>Rotate component / probe</td></tr>
+          <tr><td><kbd>C</kbd></td><td>Place selected component</td></tr>
+          <tr><td><kbd>⌘/Ctrl + Z</kbd></td><td>Undo</td></tr>
+          <tr><td><kbd>⌘/Ctrl + Shift + Z</kbd></td><td>Redo</td></tr>
+          <tr><td><kbd>⌘/Ctrl + Enter</kbd></td><td>Run simulation</td></tr>
+          <tr><td><kbd>Escape</kbd></td><td>Exit current mode / clear selection</td></tr>
+          <tr><td><kbd>Delete / Backspace</kbd></td><td>Delete selected items</td></tr>
+        </tbody>
+      </table>
+    </main>
+  </div>
+
+  <%- footer %>
+</body>
+</html>

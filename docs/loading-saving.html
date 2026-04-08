@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" href="/favicon.ico" type="image/x-icon">
+  <title><%- title %> - SpicePad Docs</title>
+  <link rel="stylesheet" href="/docs/style.css">
+</head>
+<body>
+  <%- header %>
+
+  <div class="docs-layout">
+    <%- nav %>
+
+    <main class="docs-content">
+      <h1>Loading &amp; Saving</h1>
+      <p>SpicePad allows you to save your circuits as files and reload them later. You can also export circuit netlists for use with external SPICE simulators.</p>
+
+      <h2>File Buttons</h2>
+      <img src="/docs/loading_saving/top_bar.png" alt="File management buttons" class="docs-img">
+      <p>The toolbar includes three file management buttons:</p>
+      <ul>
+        <li><strong>New</strong> — Clear the current circuit and start fresh.</li>
+        <li><strong>Open</strong> — Load a previously saved circuit file.</li>
+        <li><strong>Save</strong> — Save the current circuit to your computer.</li>
+        <li><strong>Netlist</strong> — View and download the SPICE netlist for the current circuit.</li>
+      </ul>
+
+      <h2>Loading Saved Circuits</h2>
+      <p>Click the <strong>Open</strong> button in the toolbar to select a saved circuit file from your computer. SpicePad circuit files are saved in JSON format with a <code>.json</code> extension.</p>
+      <p>When you open a file, SpicePad will:</p>
+      <ol>
+        <li>Clear the current canvas (you will be prompted to save if there are unsaved changes).</li>
+        <li>Load all components, wires, text annotations, and probes from the file.</li>
+        <li>Restore the canvas viewport (zoom level and pan position).</li>
+      </ol>
+      <p>After loading, your circuit is ready to edit or simulate. All wire connections, component values, and custom models are preserved exactly as they were when saved.</p>
+
+      <h2>Saving Circuits</h2>
+      <p>Click the <strong>Save</strong> button to download the current circuit as a JSON file. The file contains the complete circuit state, including:</p>
+      <ul>
+        <li>All components with their positions, designators, values, and SPICE models</li>
+        <li>Wire routing and connections</li>
+        <li>Text annotations</li>
+        <li>Probe placements</li>
+        <li>Viewport state (zoom and pan)</li>
+      </ul>
+
+      <h3>Browser Differences</h3>
+      <p>The save behavior differs slightly between browsers:</p>
+
+      <h4>Chrome / Edge / Safari</h4>
+      <img src="/docs/loading_saving/saving_chrome.png" alt="Chrome save dialog" class="docs-img">
+      <p>Chromium-based browsers and Safari show the native file picker, allowing you to choose the save location and filename before downloading. This gives you full control over where the file is saved.</p>
+
+      <h4>Firefox</h4>
+      <img src="/docs/loading_saving/saving_firefox.png" alt="Firefox save dialog" class="docs-img">
+      <p>Firefox uses a simpler download prompt. The file is saved to your default Downloads folder with an auto-generated filename (e.g., <code>circuit_2026-04-07.json</code>). You can rename and move the file after download if needed.</p>
+
+      <h2>Viewing &amp; Saving Netlists</h2>
+      <img src="/docs/loading_saving/netlist.png" alt="Netlist viewer" class="docs-img">
+      <p>Click the <strong>Netlist</strong> button in the toolbar to view the SPICE netlist generated from your circuit. The netlist viewer shows the raw SPICE code that will be used for simulation, including:</p>
+      <ul>
+        <li>Component definitions (netlisted from the schematic)</li>
+        <li>Subcircuit expansions</li>
+        <li>Model definitions</li>
+        <li>Simulation control directives</li>
+      </ul>
+      <p>The netlist is generated automatically based on the current circuit. Click <strong>Download Netlist</strong> at the bottom of the viewer to save it as a <code>.cir</code> file for use with external SPICE simulators like ngspice, LTspice, or HSPICE.</p>
+      <p>If the netlist generator encounters problems (such as disconnected components or duplicate designators), errors will be displayed at the top of the netlist viewer.</p>
+
+      <h2>Auto-Save &amp; Recovery</h2>
+      <p>SpicePad automatically saves your work to browser storage as you edit. If your browser crashes or you accidentally close the tab, your most recent work can usually be recovered by reopening SpicePad.</p>
+      <p><strong>Note:</strong> Browser storage is local to your device and can be cleared if you clear browser data. For important circuits, always use the Save button to create a permanent file backup.</p>
+
+      <h2>Tips</h2>
+      <ul>
+        <li>Use descriptive filenames when saving circuits (e.g., <code>amplifier_v2.json</code> instead of <code>circuit.json</code>).</li>
+        <li>Save frequently, especially before major changes or simulations.</li>
+        <li>Keep backups of important circuits outside your Downloads folder.</li>
+        <li>The netlist viewer is useful for debugging connectivity issues — check it if simulation results seem unexpected.</li>
+      </ul>
+    </main>
+  </div>
+
+  <%- footer %>
+</body>
+</html>

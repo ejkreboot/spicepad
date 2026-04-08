@@ -3,11 +3,6 @@
  */
 
 const DEFAULT_SIMULATION_OPTIONS = [
-    '.options RELTOL=0.005',
-    '.options ABSTOL=10p',
-    '.options VNTOL=100u',
-    '.options MAXORD=2',
-    '.options ITL4=30'
 ];
 
 export class NetlistGenerator {
