@@ -1,0 +1,45 @@
+---
+import DocsLayout from '../../layouts/DocsLayout.astro';
+---
+
+<DocsLayout title="Analysis Overlays">
+  <h1>Analysis Overlays</h1>
+  <p>SpicePad can run the same analysis multiple times with different component values and overlay the results in a single plot. This makes it easy to compare how a circuit responds across a parameter sweep — for example, how the cutoff frequency of a filter shifts as you change the capacitance.</p>
+
+  <h2>The circuit</h2>
+  <p>This example uses a low-pass RC filter with an AC sinusoidal source and a single <strong>Post filter</strong> probe on the output node. The capacitor C1 starts at 10 nF and will be stepped up by a factor of 10 on each loop iteration.</p>
+  <img src="/docs/analysis_overlay/circuit.png" alt="Low-pass filter schematic with Post filter probe" class="docs-img">
+
+  <h2>Writing a repeat loop in the Commands box</h2>
+  <p>Open the Simulation Settings panel and enter the following directly into the Commands box. You do not need to use the analysis tabs — the Commands box accepts any valid ngspice <code>.control</code> script.</p>
+  <pre><code>tran 10u 10m
+set curplot = const
+let cap = 0.000001
+repeat 4
+  alter @C1[c] = cap
+  tran 10u 10m
+  let cap = cap * 10
+end</code></pre>
+  <img src="/docs/analysis_overlay/analysis_loop_syntax.png" alt="Simulation Settings Commands box showing the repeat loop script" class="docs-img">
+
+  <h3>Why <code>set curplot = const</code>?</h3>
+  <p>Every time ngspice runs an analysis it creates a new <em>plot</em> (data space) and makes it the current plot. Any variables that exist in the previous current plot — such as <code>cap</code> — are discarded when that switch happens.</p>
+  <p>The <code>const</code> data space is a special, persistent plot that is never replaced or destroyed by a new analysis. By switching to it with <code>set curplot = const</code> before defining <code>cap</code>, the variable survives across every loop iteration. Without this line, <code>cap</code> would be lost the moment the first <code>tran</code> inside the loop runs, breaking the sweep.</p>
+
+  <h2>Running the simulation</h2>
+  <p>Click <strong>Done</strong> to close the settings panel, then press the green <strong>Run</strong> button (▶) in the Results panel toolbar. The loop runs four transient analyses in sequence — each time changing C1 before simulating — and all four results are collected.</p>
+  <p>The results panel shows each analysis stacked vertically. Notice that the Y-axis scale is different in each plot because auto-scaling adjusts to each individual run — making the traces very hard to compare directly.</p>
+  <p>You adjust the y-axis scale manually below each plot. But another alternative is overlaying the analyses for easy comparison.
+  <img src="/docs/analysis_overlay/analysis_results.png" alt="Results panel showing four separate transient analysis plots with different Y-axis scales" class="docs-img">
+
+  <h2>Overlaying the analyses</h2>
+  <p>Click the <strong>overlay</strong> button (the stacked layers icon) in the Results panel toolbar. This opens the <strong>Compare Analyses</strong> view, which plots all runs on a shared axis.</p>
+  <img src="/docs/analysis_overlay/analysis_overlays.png" alt="Compare Analyses view with four overlaid transient traces colour-coded by run" class="docs-img">
+  <p>Each loop iteration gets its own colour. The legend below the plot lists every run alongside a checkbox — click any checkbox to toggle that trace on or off. The probe name (<strong>Post filter</strong>) appears as a separate toggle above the run list; if you have multiple probes, each probe gets its own line style and can be shown or hidden independently.</p>
+
+  <h2>Tips</h2>
+  <ul>
+    <li>The <code>alter @C1[c] = cap</code> syntax uses the ngspice instance parameter notation. For a resistor you would write <code>alter @R1[resistance] = val</code>.</li>
+    <li>You can use <code>repeat</code>/<code>end</code>, <code>while</code>/<code>end</code>, or <code>foreach</code>/<code>end</code> loops — all standard ngspice control flow is supported in the Commands box.</li>
+  </ul>
+</DocsLayout>

@@ -4,15 +4,15 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview"
   },
   "dependencies": {
+    "astro": "^6.1.4",
     "idb-keyval": "^6.2.1"
   },
   "devDependencies": {
-    "vite": "^7.2.4",
-    "vite-plugin-html": "^3.2.2"
+    "vite": "^7.2.4"
   }
 }

@@ -1,0 +1,27 @@
+---
+import BaseLayout from './BaseLayout.astro';
+
+interface Props {
+  title: string;
+  includesPlotly?: boolean;
+  navButton: {
+    href: string;
+    icon: string;
+    label: string;
+  };
+}
+
+const { title, includesPlotly = false, navButton } = Astro.props;
+---
+
+<BaseLayout title={title} includesPlotly={includesPlotly} includeMaterialIcons={true} bodyClass="app-body">
+  <div class="page-header">
+    <img src="/logo.webp" alt="SpicePad" class="header-logo">
+    <a class="btn btn-nav" href={navButton.href}>
+      <span class="material-symbols-outlined">{navButton.icon}</span>
+      {navButton.label}
+    </a>
+  </div>
+  
+  <slot />
+</BaseLayout>

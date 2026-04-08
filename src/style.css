@@ -18,6 +18,9 @@ body {
     padding: 20px;
     background: #fff;
     color: #222;
+}
+
+body.app-body {
     height: 100vh;
     display: flex;
     flex-direction: column;

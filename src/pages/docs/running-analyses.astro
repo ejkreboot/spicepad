@@ -1,0 +1,45 @@
+---
+import DocsLayout from '../../layouts/DocsLayout.astro';
+---
+
+<DocsLayout title="Running Analyses">
+  <h1>Running Analyses</h1>
+  <p>This guide walks through running a transient simulation — using a low-pass filter as a worked example. You'll set up an AC signal source, place probes to capture node voltages, configure a transient analysis, and read the results.</p>
+
+  <h2>Step 1 — Add an AC source in series with the DC supply</h2>
+  <p>To simulate a signal riding on a DC bias, place an AC voltage source (V2) in series with your DC supply (V1). The AC source provides the time-varying stimulus while the DC source sets the operating point.</p>
+  <p>Double-click the AC source to open the component editor and set its value to:</p>
+  <pre><code>AC 1 SIN(0 1 1000)</code></pre>
+  <p>This tells ngspice the source is an AC source with amplitude 1, and a sinusoidal waveform at 1 kHz with zero DC offset and 1 V peak.</p>
+  <img src="/docs/analysis/ac_source_details.png" alt="Component editor showing V2 with value AC 1 SIN(0 1 1000)" class="docs-img">
+
+  <h2>Step 2 — Place probes</h2>
+  <p>Press <kbd>P</kbd> or click the Probe tool in the toolbar to enter probe mode. Click any wire or node to place a voltage probe at that point. Each probe is auto-labelled and will appear as a separate trace in the results panel.</p>
+  <p>For this filter example, two probes were placed:</p>
+  <ul>
+    <li><strong>Pre filter</strong> — on the node between V2 and the resistor R2, capturing the unfiltered signal.</li>
+    <li><strong>Post filter</strong> — on the output node after the RC network, capturing the filtered signal.</li>
+  </ul>
+  <img src="/docs/analysis/noise_and_probes.png" alt="Low-pass filter schematic with Pre filter and Post filter probes placed" class="docs-img">
+
+  <h2>Step 3 — Configure a transient analysis</h2>
+  <p>Open the Simulation Settings panel by clicking the settings icon in the Results panel header. Select the <strong>Transient</strong> tab.</p>
+  <p>Set the simulation parameters:</p>
+  <ul>
+    <li><strong>Time Step</strong> — the maximum time step ngspice will use internally (e.g. <code>10u</code> for 10 µs).</li>
+    <li><strong>Stop Time</strong> — how long to simulate (e.g. <code>10m</code> for 10 ms, giving 10 full cycles at 1 kHz).</li>
+  </ul>
+  <p>Click <strong>Add Transient Analysis</strong> to add it to the command list. The generated ngspice command appears in the Commands box:</p>
+  <pre><code>tran 10u 10m</code></pre>
+  <p>Click <strong>Done</strong> to close the settings panel.</p>
+  <img src="/docs/analysis/analysis_editor.png" alt="Simulation Settings panel with Transient tab showing tran 10u 10m" class="docs-img">
+
+  <h2>Step 4 — Run and read the results</h2>
+  <p>Click the green <strong>Run</strong> button (▶) at the top of the Results panel. SpicePad sends the netlist to the ngspice WebAssembly engine and streams back the results.</p>
+  <p>Once complete, a "Simulation complete" banner appears and the transient plot is displayed below it. Each probe trace is colour-coded and labelled in the legend.</p>
+  <img src="/docs/analysis/analysis_results.png" alt="Results panel showing transient analysis with Pre filter and Post filter traces" class="docs-img">
+  <p>In this example the Pre filter trace (green) swings ±1 V around the 5 V DC bias, while the Post filter trace (orange) shows the RC network attenuating the 1 kHz signal — the expected behaviour of a low-pass filter.</p>
+
+  <h2>Axis controls</h2>
+  <p>Below the plot, the <strong>Voltage (V)</strong> min/max fields let you manually set the Y-axis range. Click <strong>Auto</strong> to reset to automatic scaling. For transient plots you can also switch between <strong>Standard</strong> (voltage vs time) and <strong>X-Y</strong> mode to plot two probes against each other.</p>
+</DocsLayout>
