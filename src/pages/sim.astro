@@ -351,21 +351,20 @@ import AppLayout from '../layouts/AppLayout.astro';
       </div>
       <div class="modal-body">
         <div class="modal-field">
-          <label for="subcircuit-name-input">Subcircuit Name</label>
-          <input type="text" id="subcircuit-name-input" placeholder="mysubckt" />
+          <label for="subcircuit-text">Paste SPICE code below, or load a <code>.cir</code> / <code>.lib</code> file.</label>
+          <textarea id="subcircuit-text" rows="14" placeholder=".subckt mysubckt in out vdd gnd&#10;* internal elements here&#10;.ends mysubckt" spellcheck="false"></textarea>
         </div>
-        <div class="modal-field">
-          <label for="subcircuit-pins-input">Pins (space separated)</label>
-          <input type="text" id="subcircuit-pins-input" placeholder="in out vdd gnd" />
-        </div>
-        <div class="modal-field">
-          <label for="subcircuit-body-input">Subcircuit Definition</label>
-          <textarea id="subcircuit-body-input" rows="10" placeholder=".subckt mysubckt in out vdd gnd\n...\n.ends mysubckt"></textarea>
-        </div>
+        <p id="subcircuit-modal-error" class="modal-error" style="display:none;"></p>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-secondary" id="subcircuit-cancel-btn" type="button">Cancel</button>
-        <button class="btn btn-primary" id="subcircuit-create-btn" type="button">Create</button>
+        <div class="modal-footer-left">
+          <button class="btn btn-secondary" id="subcircuit-load-btn" type="button">Load File…</button>
+          <input type="file" id="subcircuit-file-input" accept=".cir,.lib,.sp,.spi,.txt" style="display:none;" />
+        </div>
+        <div class="modal-footer-right">
+          <button class="btn btn-secondary" id="subcircuit-modal-cancel" type="button">Cancel</button>
+          <button class="btn btn-primary" id="subcircuit-modal-ok" type="button">Create</button>
+        </div>
       </div>
     </div>
   </div>

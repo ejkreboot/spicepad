@@ -23,6 +23,8 @@ export class SubcircuitManager {
         const cancelBtn = document.getElementById('subcircuit-modal-cancel');
         const closeBtn = modal?.querySelector('.modal-close');
         const errorEl = document.getElementById('subcircuit-modal-error');
+        const loadBtn = document.getElementById('subcircuit-load-btn');
+        const fileInput = document.getElementById('subcircuit-file-input');
 
         if (!modal || !textarea || !okBtn || !cancelBtn || !errorEl) return;
 
@@ -31,6 +33,22 @@ export class SubcircuitManager {
         okBtn.addEventListener('click', () => this._handleSubcircuitSubmit());
         cancelBtn.addEventListener('click', () => this.cancelSubcircuitModal());
         closeBtn?.addEventListener('click', () => this.cancelSubcircuitModal());
+
+        if (loadBtn && fileInput) {
+            loadBtn.addEventListener('click', () => fileInput.click());
+            fileInput.addEventListener('change', () => {
+                const file = fileInput.files?.[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    textarea.value = e.target.result ?? '';
+                    this._setSubcircuitError('');
+                    textarea.focus();
+                };
+                reader.readAsText(file);
+                fileInput.value = '';
+            });
+        }
     }
 
     promptSubcircuitDefinition() {
