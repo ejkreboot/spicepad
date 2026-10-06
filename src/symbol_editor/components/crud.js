@@ -249,6 +249,9 @@ export async function updateComponent() {
     if (currentComp?.isGround) {
         comp.isGround = true;
     }
+    if (currentComp?.isNetFlag) {
+        comp.isNetFlag = true;
+    }
 
     // If ID changed, remove old and add new
     const currentId = getCurrentComponentId();

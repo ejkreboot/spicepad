@@ -229,7 +229,7 @@ function extractPlotAnalysis(plotName) {
 		if (isScale) {
 			sweepVec = { name: vecName, ...vecData };
 		} else {
-			dataVecs.push({ name: vecName, ...vecData });
+			dataVecs.push({ name: canonicalVectorName(vecName), ...vecData });
 		}
 	}
 
@@ -238,6 +238,23 @@ function extractPlotAnalysis(plotName) {
 	}
 
 	return buildVectorResult(analysisType, plotName, sweepVec, dataVecs, isComplex);
+}
+
+/**
+ * ngspice names node vectors inconsistently: numeric nodes as "V(1)" but named
+ * nodes bare ("vcc"), and source currents as "v1#branch". Normalize to the
+ * v(node) / i(source) form the editor asks for.
+ */
+function canonicalVectorName(name) {
+	const branch = name.match(/^(.+)#branch$/i);
+	if (branch) {
+		return `i(${branch[1]})`;
+	}
+	// Already an expression (V(1)), a device parameter (@r1[i]) or an internal node (q1#base)
+	if (/[()@[#]/.test(name)) {
+		return name;
+	}
+	return `v(${name})`;
 }
 
 function readVectorData(infoPtr, readImag) {

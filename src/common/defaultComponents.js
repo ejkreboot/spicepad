@@ -628,6 +628,50 @@ export function getDefaultComponents() {
 			"models": [],
 			"componentType": "primitive"
 		},
+		"net_flag": {
+			"name": "Net Flag",
+			"description": "Connects every flag with the same net name, without drawing a wire",
+			"defaultValue": null,
+			"designator": {
+				"prefix": "VCC",
+				"autoIncrement": false
+			},
+			"size": {
+				"width": 20,
+				"height": 20
+			},
+			"pins": [
+				{
+					"id": "1",
+					"name": "NET",
+					"position": {
+						"x": 0,
+						"y": 10
+					},
+					"labelPosition": {
+						"x": 4,
+						"y": 6
+					}
+				}
+			],
+			"labels": {
+				"designator": [
+					{
+						"x": 20,
+						"y": 10
+					},
+					{
+						"x": 10,
+						"y": 20
+					}
+				],
+				"value": []
+			},
+			"svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 50 30\" data-generated-by=\"symbol-editor\" data-comp-width=\"20\" data-comp-height=\"20\" data-offset-x=\"5\" data-offset-y=\"5\"><path fill=\"none\" stroke=\"#000000\" stroke-width=\"1\" stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"M 5 15 L 11 9 L 45 9 L 45 21 L 11 21 Z\"/></svg>",
+			"isNetFlag": true,
+			"models": [],
+			"componentType": "primitive"
+		},
 		"led": {
 			"name": "LED",
 			"description": "",

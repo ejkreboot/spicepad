@@ -2,8 +2,12 @@
  * ComponentEditorModal - Handles the component editor modal and probe editor modal.
  *
  * Manages double-click-to-edit flow for components (label, value, model,
- * custom SPICE, subcircuit args/body) and probes (label, type, color).
+ * custom SPICE, subcircuit args/body), net flags (net name) and probes
+ * (label, type, color).
  */
+
+// Net names become SPICE node names, so keep them to plain identifiers
+const NET_NAME_PATTERN = /^[A-Za-z0-9_]+$/;
 
 export class ComponentEditorModal {
     constructor({ canvas, componentManager, probeManager, subcircuitManager, onSave }) {
@@ -16,6 +20,7 @@ export class ComponentEditorModal {
         this._modalOpen = false;
         this._editingComponent = null;
         this._editingProbe = null;
+        this._onComponentSaved = null;
     }
 
     get isModalOpen() {
@@ -39,6 +44,14 @@ export class ComponentEditorModal {
         closeBtn?.addEventListener('click', () => this.closeComponentModal());
         cancelBtn?.addEventListener('click', () => this.closeComponentModal());
         saveBtn?.addEventListener('click', () => this.saveComponentModal());
+
+        // Net flags only have a name, so Enter in that field confirms the dialog
+        document.getElementById('component-label-input')?.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter' && this._isNetFlag(this._editingComponent)) {
+                event.preventDefault();
+                this.saveComponentModal();
+            }
+        });
 
         const probeOverlay = document.getElementById('probe-modal');
         const probeCloseBtn = document.querySelector('#probe-modal .modal-close');
@@ -169,7 +182,15 @@ export class ComponentEditorModal {
         return match ? match[1] : '';
     }
 
-    openComponentModal(component) {
+    _isNetFlag(component) {
+        return Boolean(component?.meta?.isNetFlag || component?.meta?.definition?.isNetFlag);
+    }
+
+    /**
+     * @param {import('./Component.js').Component} component
+     * @param {{ onSaved?: () => void }} [options] - onSaved runs after a successful save
+     */
+    openComponentModal(component, { onSaved } = {}) {
         const overlay = document.getElementById('component-modal');
         const labelInput = document.getElementById('component-label-input');
         const modelField = document.getElementById('component-model-field');
@@ -195,6 +216,12 @@ export class ComponentEditorModal {
             (defaultValue !== null && defaultValue !== undefined);
 
         labelInput.value = component.meta?.designatorText ?? component.name ?? component.id ?? '';
+
+        const isNetFlag = this._isNetFlag(component);
+        const titleEl = document.getElementById('component-modal-title');
+        const labelLabel = overlay.querySelector('label[for="component-label-input"]');
+        if (titleEl) titleEl.textContent = isNetFlag ? 'Net Flag' : 'Edit Component';
+        if (labelLabel) labelLabel.textContent = isNetFlag ? 'Net Name' : 'Label';
 
         if (isSubcircuit) {
             modelField.style.display = 'none';
@@ -291,10 +318,17 @@ export class ComponentEditorModal {
             subcktBodyInput.value = '';
         }
 
+        if (isNetFlag) {
+            // Only the name matters for a flag; hide every SPICE-element field
+            [modelField, valueField, customModelField, subcktArgsField, subcktBodyField]
+                .forEach(field => { if (field) field.style.display = 'none'; });
+        }
+
         overlay.classList.add('is-open');
         overlay.setAttribute('aria-hidden', 'false');
         this._modalOpen = true;
         this._editingComponent = component;
+        this._onComponentSaved = onSaved ?? null;
         labelInput.focus();
         labelInput.select();
     }
@@ -307,11 +341,17 @@ export class ComponentEditorModal {
         }
         this._modalOpen = false;
         this._editingComponent = null;
+        this._onComponentSaved = null;
     }
 
     saveComponentModal() {
         if (!this._editingComponent) {
             this.closeComponentModal();
+            return;
+        }
+
+        if (this._isNetFlag(this._editingComponent)) {
+            this._saveNetFlag();
             return;
         }
 
@@ -394,6 +434,21 @@ export class ComponentEditorModal {
         }
 
         this.componentManager.viewport.render();
+        this._onComponentSaved?.();
+        this.closeComponentModal();
+    }
+
+    _saveNetFlag() {
+        const labelInput = document.getElementById('component-label-input');
+        const name = labelInput?.value.trim() ?? '';
+        if (!NET_NAME_PATTERN.test(name)) {
+            alert('Net names may only contain letters, digits and underscores (e.g. VCC, VSS, V_5V).');
+            return;
+        }
+
+        this._editingComponent.meta.designatorText = name;
+        this.componentManager.viewport.render();
+        this._onComponentSaved?.();
         this.closeComponentModal();
     }
 }

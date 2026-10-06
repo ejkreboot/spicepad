@@ -633,6 +633,11 @@ class CircuitEditorApp {
             this._ghostComponent.y = position.y;
         }
 
+        // Preview the name a placed flag will get, since the tag is sized to it
+        if (definition.isNetFlag) {
+            this._ghostComponent.meta.designatorText = this._lastNetFlagName() ?? definition.designator?.prefix ?? '';
+        }
+
         return this._ghostComponent;
     }
 
@@ -661,7 +666,9 @@ class CircuitEditorApp {
         const designatorTemplate = resolvedDefinition.designator
             || baseDefinition.designator
             || (resolvedDefinition.componentType === 'subcircuit' ? { prefix: 'X', autoIncrement: true } : null);
-        const designatorText = this._nextDesignator(designatorTemplate);
+        const designatorText = resolvedDefinition.isNetFlag
+            ? this._lastNetFlagName() ?? this._nextDesignator(designatorTemplate)
+            : this._nextDesignator(designatorTemplate);
         const valueText = resolvedDefinition.componentType === 'subcircuit' ? null : resolvedDefinition.defaultValue ?? null;
 
         const component = createComponentFromDefinition({
@@ -694,6 +701,27 @@ class CircuitEditorApp {
         if (lastAction) {
             lastAction.data.stateAfter = this._serialize();
         }
+
+        // A flag is only useful once named, so ask right away (Enter keeps the suggested name)
+        if (resolvedDefinition.isNetFlag) {
+            this.componentEditorModal.openComponentModal(component, {
+                onSaved: () => {
+                    if (lastAction) {
+                        lastAction.data.stateAfter = this._serialize();
+                    }
+                    this._saveToLocalStorage();
+                }
+            });
+        }
+    }
+
+    _lastNetFlagName() {
+        const components = this.componentManager.components;
+        for (let i = components.length - 1; i >= 0; i--) {
+            const name = components[i].meta?.isNetFlag ? components[i].meta.designatorText : '';
+            if (name) return name;
+        }
+        return null;
     }
 
     _nextDesignator(designator) {

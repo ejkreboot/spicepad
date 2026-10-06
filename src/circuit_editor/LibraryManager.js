@@ -6,6 +6,9 @@
 import { loadLibrary, replaceLibrary } from '../common/storage/library.js';
 import { DEFAULT_COMPONENT_LIBRARY } from '../common/defaultComponents.js';
 
+// Listed in palette order, right after the wire and text tools
+const BUILT_IN_COMPONENT_IDS = ['net_flag', 'custom_subcircuit'];
+
 export class LibraryManager {
     constructor({ onSelectionChange, onToolChange }) {
         this.componentLibrary = {};
@@ -21,19 +24,23 @@ export class LibraryManager {
             console.error('Failed to load component library', error);
             this.componentLibrary = { ...DEFAULT_COMPONENT_LIBRARY };
         }
-        this._ensureSubcircuitPlaceholder();
+        this._ensureBuiltInComponents();
         this.renderComponentPanel();
     }
 
-    _ensureSubcircuitPlaceholder() {
-        const id = 'custom_subcircuit';
-        if (this.componentLibrary[id]) return;
-        const fallback = DEFAULT_COMPONENT_LIBRARY[id];
-        if (fallback) {
+    /**
+     * Built-in entries (net flag, subcircuit placeholder) are editor tools rather than
+     * library symbols: they always come from the defaults, so they exist for any library
+     * and stored copies from older versions cannot shadow the current definitions.
+     */
+    _ensureBuiltInComponents() {
+        for (const id of BUILT_IN_COMPONENT_IDS) {
+            const builtIn = DEFAULT_COMPONENT_LIBRARY[id];
+            if (!builtIn) continue;
             try {
-                this.componentLibrary[id] = JSON.parse(JSON.stringify(fallback));
+                this.componentLibrary[id] = JSON.parse(JSON.stringify(builtIn));
             } catch (error) {
-                this.componentLibrary[id] = { ...fallback };
+                this.componentLibrary[id] = { ...builtIn };
             }
         }
     }
@@ -62,7 +69,7 @@ export class LibraryManager {
 
                 await replaceLibrary(parsed);
 
-                this._ensureSubcircuitPlaceholder();
+                this._ensureBuiltInComponents();
                 this.renderComponentPanel();
                 const firstId = Object.keys(parsed)[0] ?? null;
                 if (firstId) {
@@ -125,7 +132,28 @@ export class LibraryManager {
         });
         list.appendChild(textTool);
 
+        for (const id of BUILT_IN_COMPONENT_IDS) {
+            const definition = this.componentLibrary[id];
+            if (!definition) continue;
+            const item = document.createElement('div');
+            item.className = 'component-item tool-item';
+            item.dataset.componentId = id;
+            item.title = definition.name || id;
+            item.innerHTML = `
+                <div class="component-thumb">${definition.svg ?? ''}</div>
+            `;
+            item.addEventListener('click', () => {
+                this.setSelectedComponent(id);
+            });
+            list.appendChild(item);
+        }
+
+        const divider = document.createElement('div');
+        divider.className = 'component-list-divider';
+        list.appendChild(divider);
+
         for (const [id, definition] of entries) {
+            if (BUILT_IN_COMPONENT_IDS.includes(id)) continue;
             const item = document.createElement('div');
             item.className = 'component-item';
             item.dataset.componentId = id;

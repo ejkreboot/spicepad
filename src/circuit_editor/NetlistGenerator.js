@@ -5,6 +5,9 @@
 const DEFAULT_SIMULATION_OPTIONS = [
 ];
 
+// Net flag names that join the flagged net to SPICE ground (node 0)
+const GROUND_NET_ALIASES = new Set(['0', 'gnd']);
+
 export class NetlistGenerator {
     /**
      * @param {import('./ComponentManager.js').ComponentManager} componentManager
@@ -16,6 +19,7 @@ export class NetlistGenerator {
         this.wireGraph = wireGraph;
         this.probeManager = probeManager;
         this.simulationDirectives = []; // Will be set by the app
+        this._netFlagLinks = new Map(); // Rebuilt on each generate; see _buildNetFlagLinks
     }
 
     /**
@@ -53,6 +57,9 @@ export class NetlistGenerator {
         if (this.probeManager) {
             this.probeManager.refreshConnections();
         }
+
+        // Same-named net flags behave as invisible wires during connectivity walks
+        this._netFlagLinks = this._buildNetFlagLinks();
 
         // Build net assignments (map node IDs to net names)
         const netMap = this._buildNetMap();
@@ -355,6 +362,11 @@ export class NetlistGenerator {
                     queue.push(otherId);
                 }
             }
+            for (const linkedId of this._netFlagLinks.get(nodeId) ?? []) {
+                if (!visited.has(linkedId)) {
+                    queue.push(linkedId);
+                }
+            }
         }
 
         return visited;
@@ -397,6 +409,7 @@ export class NetlistGenerator {
         let pinCount = 0;
 
         for (const component of this.componentManager.components) {
+            if (this._isNetFlag(component)) continue;
             const pinMap = this.componentManager.pinNodeIdsByComponent.get(component.id);
             if (!pinMap) continue;
 
@@ -433,7 +446,8 @@ export class NetlistGenerator {
 
     /**
      * Build a map from wire node IDs to net names
-     * Groups connected nodes into nets and assigns net numbers
+     * Groups connected nodes into nets and assigns net names: ground nets become '0',
+     * nets carrying a net flag take the flag's name, and the rest are numbered.
      * @returns {Map<number, string>} Map of nodeId -> net name
      */
     _buildNetMap() {
@@ -443,15 +457,21 @@ export class NetlistGenerator {
 
         // Get all nodes including component pins
         const allNodeIds = new Set(this.wireGraph.getAllNodes().map(n => n.id));
-        
-        // Add component pin node IDs
+
+        // Several pins can share one node (e.g. a flag dropped directly on a resistor pin)
+        const pinOwners = new Map(); // nodeId -> components with a pin on that node
+        const flagNames = new Set(); // lowercase names claimed by flags; numbered nets skip these
         for (const component of this.componentManager.components) {
             const pinMap = this.componentManager.pinNodeIdsByComponent.get(component.id);
             if (pinMap) {
                 for (const nodeId of pinMap.values()) {
                     allNodeIds.add(nodeId);
+                    if (!pinOwners.has(nodeId)) pinOwners.set(nodeId, []);
+                    pinOwners.get(nodeId).push(component);
                 }
             }
+            const flagName = this._getNetFlagName(component);
+            if (flagName) flagNames.add(flagName.toLowerCase());
         }
 
         // Flood fill to find connected nets
@@ -459,19 +479,26 @@ export class NetlistGenerator {
             if (visited.has(nodeId)) continue;
 
             const connectedNodes = this._getConnectedNodes(nodeId, visited);
-            
-            // Check if this net contains a ground component
-            let netName = null;
+
+            // Ground wins; otherwise use a flag name if the net carries one
+            let isGround = false;
+            const namesOnNet = [];
             for (const id of connectedNodes) {
-                const component = this._findComponentByPinNode(id);
-                if (component?.meta?.isGround) {
-                    netName = '0'; // Ground net
-                    break;
+                for (const component of pinOwners.get(id) ?? []) {
+                    if (component.meta?.isGround) isGround = true;
+                    const flagName = this._getNetFlagName(component);
+                    if (flagName) namesOnNet.push(flagName);
                 }
             }
 
-            // Otherwise assign a numbered net
-            if (!netName) {
+            let netName;
+            if (isGround || namesOnNet.some(name => GROUND_NET_ALIASES.has(name.toLowerCase()))) {
+                netName = '0';
+            } else if (namesOnNet.length > 0) {
+                // Differently named flags wired together: pick one name deterministically
+                netName = namesOnNet.sort((a, b) => a.localeCompare(b))[0];
+            } else {
+                while (flagNames.has(`${netNumber}`)) netNumber++;
                 netName = `${netNumber}`;
                 netNumber++;
             }
@@ -483,6 +510,45 @@ export class NetlistGenerator {
         }
 
         return netMap;
+    }
+
+    /**
+     * Link the pins of net flags that share a name (case-insensitive, like SPICE nodes)
+     * so connectivity walks treat them as wired together.
+     * @returns {Map<number, number[]>} pin nodeId -> pin nodeIds of other flags with the same name
+     */
+    _buildNetFlagLinks() {
+        const nodesByName = new Map();
+        for (const component of this.componentManager.components) {
+            const name = this._getNetFlagName(component);
+            if (!name) continue;
+            const pinMap = this.componentManager.pinNodeIdsByComponent.get(component.id);
+            if (!pinMap) continue;
+            const key = name.toLowerCase();
+            if (!nodesByName.has(key)) nodesByName.set(key, []);
+            nodesByName.get(key).push(...pinMap.values());
+        }
+
+        const links = new Map();
+        for (const nodeIds of nodesByName.values()) {
+            for (const nodeId of nodeIds) {
+                links.set(nodeId, nodeIds.filter(id => id !== nodeId));
+            }
+        }
+        return links;
+    }
+
+    _isNetFlag(component) {
+        return Boolean(component?.meta?.isNetFlag || component?.meta?.definition?.isNetFlag);
+    }
+
+    /**
+     * @param {import('./Component.js').Component | null} component
+     * @returns {string | null} SPICE-safe net name, or null if not a (named) net flag
+     */
+    _getNetFlagName(component) {
+        if (!this._isNetFlag(component)) return null;
+        return this._sanitizeIdentifier(component.meta?.designatorText, null, { allowLeadingDigit: true }) || null;
     }
 
     /**
@@ -510,28 +576,14 @@ export class NetlistGenerator {
                     queue.push(otherId);
                 }
             }
-        }
-
-        return connected;
-    }
-
-    /**
-     * Find a component that has a pin connected to the given node ID
-     * @param {number} nodeId
-     * @returns {import('./Component.js').Component | null}
-     */
-    _findComponentByPinNode(nodeId) {
-        for (const component of this.componentManager.components) {
-            const pinMap = this.componentManager.pinNodeIdsByComponent.get(component.id);
-            if (pinMap) {
-                for (const pinNodeId of pinMap.values()) {
-                    if (pinNodeId === nodeId) {
-                        return component;
-                    }
+            for (const linkedId of this._netFlagLinks.get(nodeId) ?? []) {
+                if (!visited.has(linkedId)) {
+                    queue.push(linkedId);
                 }
             }
         }
-        return null;
+
+        return connected;
     }
 
     /**
@@ -543,8 +595,8 @@ export class NetlistGenerator {
         const lines = [];
 
         for (const component of this.componentManager.components) {
-            // Skip ground symbols
-            if (component.meta?.isGround) continue;
+            // Ground symbols and net flags only name nets; they emit no element
+            if (component.meta?.isGround || this._isNetFlag(component)) continue;
 
             const line = this._generateComponentLine(component, netMap);
             if (line) {

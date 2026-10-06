@@ -220,6 +220,10 @@ export class SelectionManager {
 
     _finishGroupDrag() {
         if (!this.groupDrag) return;
+        for (const componentId of this.groupDrag.componentPositions.keys()) {
+            const component = this.componentManager.components.find(c => c.id === componentId);
+            if (component) this.componentManager.connectPinsToWires(component);
+        }
         this.wireGraph.cleanup();
         this.groupDrag = null;
     }
@@ -292,7 +296,7 @@ export class SelectionManager {
 
         this.selectedComponentIds = new Set();
         for (const component of this.componentManager.components) {
-            const bounds = component.getBounds();
+            const bounds = this.componentManager.getComponentBounds(component);
             const inside =
                 bounds.x >= minX &&
                 bounds.y >= minY &&

@@ -2939,6 +2939,9 @@ import { getDefaultComponents } from '../common/defaultComponents.js';
             if (components[currentComponentId]?.isGround) {
                 comp.isGround = true;
             }
+            if (components[currentComponentId]?.isNetFlag) {
+                comp.isNetFlag = true;
+            }
 
             // If ID changed, remove old and add new
             if (currentComponentId && currentComponentId !== id) {

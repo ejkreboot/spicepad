@@ -221,7 +221,8 @@ export function createComponentFromDefinition(options) {
 			labels: definition.labels ?? null,
 			designatorText: options.designatorText ?? '',
 			valueText: options.valueText ?? null,
-			isGround: definition.isGround ?? false
+			isGround: definition.isGround ?? false,
+			isNetFlag: definition.isNetFlag ?? false
 		}
 	});
 }

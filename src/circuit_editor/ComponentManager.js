@@ -4,6 +4,14 @@
 
 import { createBasicSquareComponent } from './Component.js';
 
+const LABEL_FONT = '8px -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif';
+
+// Netport tag geometry (world units): the point sits on the pin, the body holds the net name
+const NETPORT_POINT = 6;
+const NETPORT_HALF_HEIGHT = 6;
+const NETPORT_TEXT_PAD = 3;
+const NETPORT_MIN_TEXT_WIDTH = 8;
+
 export class ComponentManager {
 	/**
 	 * @param {import('./CanvasViewport.js').CanvasViewport} viewport
@@ -59,7 +67,31 @@ export class ComponentManager {
 	addComponent(component) {
 		this.components.push(component);
 		this._registerComponentPins(component);
+		this.connectPinsToWires(component);
 		this.viewport.render();
+	}
+
+	/**
+	 * Attach a single-pin symbol (net flag, ground) to a wire its pin lands on mid-segment
+	 * by splitting the wire at the pin. Multi-pin parts are skipped so dropping one along
+	 * a wire does not short it out.
+	 * @param {import('./Component.js').Component} component
+	 */
+	connectPinsToWires(component) {
+		if (component.pins.length !== 1) return;
+		const pinMap = this.pinNodeIdsByComponent.get(component.id);
+		for (const nodeId of pinMap?.values() ?? []) {
+			const pinNode = this.wireGraph.getNode(nodeId);
+			if (!pinNode) continue;
+			const hit = this.wireGraph.getSegmentAt(pinNode.x, pinNode.y, 0.001);
+			if (!hit) continue;
+			const end1 = this.wireGraph.getNode(hit.segment.nodeId1);
+			const end2 = this.wireGraph.getNode(hit.segment.nodeId2);
+			const isAtEnd = [end1, end2].some(end => end && end.x === pinNode.x && end.y === pinNode.y);
+			if (isAtEnd) continue;
+			// splitSegment reuses the pin node already sitting at this point
+			this.wireGraph.splitSegment(hit.segment.id, pinNode.x, pinNode.y);
+		}
 	}
 	
 	/**
@@ -105,8 +137,11 @@ export class ComponentManager {
 		ctx.save();
 		ctx.globalAlpha = this.ghostOpacity;
 
-		const svgEntry = this._getSvgEntry(component);
-		if (svgEntry?.ready) {
+		const isNetFlag = this._isNetFlag(component);
+		const svgEntry = isNetFlag ? null : this._getSvgEntry(component);
+		if (isNetFlag) {
+			this._renderNetFlag(ctx, viewport, component);
+		} else if (svgEntry?.ready) {
 			this._renderSvgComponent(ctx, viewport, component, svgEntry);
 		} else {
 			const bounds = component.getBounds();
@@ -247,6 +282,7 @@ export class ComponentManager {
 		this.dragStartWorld = null;
 		this.dragStartPos = null;
         
+		if (draggedComponent) this.connectPinsToWires(draggedComponent);
 		this.wireGraph.cleanup();
         
 		// Call callback to handle auto-connection
@@ -273,7 +309,7 @@ export class ComponentManager {
 			const isSelected = this.selectedComponentIds.has(component.id);
 			const isHovered = !isSelected && !this.isDragging && !this.isLabelDragging && this.hoverComponent === component;
 			if (isSelected) {
-				const bounds = component.getBounds();
+				const bounds = this.getComponentBounds(component);
 				const pad = 4 / viewport.zoom;
 				const radius = 4 / viewport.zoom;
 				viewport.drawRoundedRect(
@@ -288,7 +324,7 @@ export class ComponentManager {
 				);
 			}
 			if (isHovered) {
-				const bounds = component.getBounds();
+				const bounds = this.getComponentBounds(component);
 				const pad = 3 / viewport.zoom;
 				const radius = 4 / viewport.zoom;
 				viewport.drawRoundedRect(
@@ -303,8 +339,11 @@ export class ComponentManager {
 				);
 			}
 
-			const svgEntry = this._getSvgEntry(component);
-			if (svgEntry?.ready) {
+			const isNetFlag = this._isNetFlag(component);
+			const svgEntry = isNetFlag ? null : this._getSvgEntry(component);
+			if (isNetFlag) {
+				this._renderNetFlag(ctx, viewport, component);
+			} else if (svgEntry?.ready) {
 				this._renderSvgComponent(ctx, viewport, component, svgEntry);
 			} else {
 				const bounds = component.getBounds();
@@ -320,8 +359,130 @@ export class ComponentManager {
 				this._renderPinLabel(ctx, viewport, component, pin, pos);
 			}
 
-			this._renderComponentLabels(ctx, viewport, component);
+			// A net flag's name is drawn inside its tag
+			if (!isNetFlag) {
+				this._renderComponentLabels(ctx, viewport, component);
+			}
 		}
+	}
+
+	/**
+	 * Net flags render as a netport tag sized to their name rather than from a fixed SVG,
+	 * so the outline, the hit box and the name all come from this shape.
+	 * @param {import('./Component.js').Component} component
+	 */
+	_isNetFlag(component) {
+		return Boolean(component?.meta?.isNetFlag || component?.meta?.definition?.isNetFlag);
+	}
+
+	_getNetFlagText(component) {
+		return component.meta?.designatorText
+			|| component.meta?.definition?.designator?.prefix
+			|| 'NET';
+	}
+
+	_measureLabelText(text) {
+		const ctx = this.viewport.ctx;
+		ctx.save();
+		ctx.setTransform(1, 0, 0, 1, 0, 0);
+		ctx.font = LABEL_FONT;
+		const width = ctx.measureText(String(text)).width || 0;
+		ctx.restore();
+		return width;
+	}
+
+	/**
+	 * @param {import('./Component.js').Component} component
+	 * @returns {{ text: string, points: Array<{x: number, y: number}>, textPos: {x: number, y: number}, textAngle: number, bounds: {x: number, y: number, width: number, height: number} } | null}
+	 */
+	_getNetFlagShape(component) {
+		const pin = component.pins[0];
+		if (!pin) return null;
+		const tip = component.getPinWorldPosition(pin);
+
+		// The tag grows from the pin toward the symbol's rotation center (see getPinWorldPosition)
+		const towardX = component.x + component.width / 2 - tip.x;
+		const towardY = component.y + component.height / 2 - tip.y;
+		const horizontal = Math.abs(towardX) >= Math.abs(towardY);
+		const dir = horizontal
+			? { x: towardX < 0 ? -1 : 1, y: 0 }
+			: { x: 0, y: towardY < 0 ? -1 : 1 };
+		const normal = { x: -dir.y, y: dir.x };
+
+		const text = this._getNetFlagText(component);
+		const textWidth = Math.max(this._measureLabelText(text), NETPORT_MIN_TEXT_WIDTH);
+		// Same tag in every orientation; on a vertical tag the name turns to read bottom-to-top
+		const halfWidth = NETPORT_HALF_HEIGHT;
+		const bodyLength = textWidth + NETPORT_TEXT_PAD * 2;
+		const end = NETPORT_POINT + bodyLength;
+		const at = (along, across) => ({
+			x: tip.x + dir.x * along + normal.x * across,
+			y: tip.y + dir.y * along + normal.y * across
+		});
+
+		const points = [
+			at(0, 0),
+			at(NETPORT_POINT, halfWidth),
+			at(end, halfWidth),
+			at(end, -halfWidth),
+			at(NETPORT_POINT, -halfWidth)
+		];
+		const xs = points.map(p => p.x);
+		const ys = points.map(p => p.y);
+		const minX = Math.min(...xs);
+		const minY = Math.min(...ys);
+		return {
+			text,
+			points,
+			textPos: at(NETPORT_POINT + bodyLength / 2, 0),
+			textAngle: horizontal ? 0 : -Math.PI / 2,
+			bounds: {
+				x: minX,
+				y: minY,
+				width: Math.max(...xs) - minX,
+				height: Math.max(...ys) - minY
+			}
+		};
+	}
+
+	_renderNetFlag(ctx, viewport, component) {
+		const shape = this._getNetFlagShape(component);
+		if (!shape) return;
+		viewport.beginWorldPath();
+		ctx.beginPath();
+		shape.points.forEach((point, index) => {
+			if (index === 0) ctx.moveTo(point.x, point.y);
+			else ctx.lineTo(point.x, point.y);
+		});
+		ctx.closePath();
+		ctx.fillStyle = this.bodyFill;
+		ctx.fill();
+		ctx.strokeStyle = '#000000';
+		ctx.lineWidth = 1;
+		ctx.lineJoin = 'round';
+		ctx.stroke();
+
+		ctx.fillStyle = '#111111';
+		ctx.font = LABEL_FONT;
+		ctx.textAlign = 'center';
+		ctx.textBaseline = 'middle';
+		ctx.translate(shape.textPos.x, shape.textPos.y);
+		ctx.rotate(shape.textAngle);
+		ctx.fillText(shape.text, 0, 0);
+		viewport.endWorldPath();
+	}
+
+	/**
+	 * World-space box around what is drawn for a component; used for hit testing,
+	 * highlights and marquee selection.
+	 * @param {import('./Component.js').Component} component
+	 */
+	getComponentBounds(component) {
+		if (this._isNetFlag(component)) {
+			const shape = this._getNetFlagShape(component);
+			if (shape) return shape.bounds;
+		}
+		return component.getBounds();
 	}
 
 	_getLabelPosition(component, labelType, labelsOverride = null) {
@@ -384,7 +545,7 @@ export class ComponentManager {
 		const ctx = this.viewport.ctx;
 		ctx.save();
 		ctx.setTransform(1, 0, 0, 1, 0, 0);
-		ctx.font = '8px -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif';
+		ctx.font = LABEL_FONT;
 		const metrics = ctx.measureText(String(text));
 		ctx.restore();
 		const fontSize = 8;
@@ -504,7 +665,7 @@ export class ComponentManager {
 
 		viewport.beginWorldPath();
 		ctx.fillStyle = '#111111';
-		ctx.font = '8px -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif';
+		ctx.font = LABEL_FONT;
 		ctx.textAlign = 'center';
 		ctx.textBaseline = 'middle';
 
@@ -736,7 +897,10 @@ export class ComponentManager {
 	_getComponentAt(worldX, worldY) {
 		for (let i = this.components.length - 1; i >= 0; i--) {
 			const component = this.components[i];
-			if (component.hitTest(worldX, worldY, this.hitPadding)) {
+			const hit = this._isNetFlag(component)
+				? this._pointInRect(worldX, worldY, this._padRect(this.getComponentBounds(component), this.hitPadding))
+				: component.hitTest(worldX, worldY, this.hitPadding);
+			if (hit) {
 				return component;
 			}
 		}
@@ -754,6 +918,8 @@ export class ComponentManager {
 	_findLabelHit(worldX, worldY, extraPadding = 0) {
 		for (let i = this.components.length - 1; i >= 0; i--) {
 			const component = this.components[i];
+			// A net flag's name is part of its tag, so grabbing it moves the flag instead
+			if (this._isNetFlag(component)) continue;
 			const designatorBounds = this._getLabelBounds(component, 'designator', component.meta?.designatorText ?? '', extraPadding);
 			if (designatorBounds && this._pointInRect(worldX, worldY, designatorBounds)) {
 				return { component, labelType: 'designator', labelIndex: designatorBounds.labelIndex, position: designatorBounds.position };
@@ -771,6 +937,15 @@ export class ComponentManager {
 
 	findLabelHit(worldX, worldY) {
 		return this._findLabelHit(worldX, worldY);
+	}
+
+	_padRect(rect, padding) {
+		return {
+			x: rect.x - padding,
+			y: rect.y - padding,
+			width: rect.width + padding * 2,
+			height: rect.height + padding * 2
+		};
 	}
 
 	_pointInRect(x, y, rect) {
